@@ -2,11 +2,13 @@ import AppKit
 
 final class NotchWindow: NSPanel {
     private let notchView: NotchContentView
+    private var settingsWindow: NotchSettingsWindow?
     private var collapseWorkItem: DispatchWorkItem?
     private var isExpanded = false
 
     init() {
-        let initialStyles = NotchStyle.styles(for: NSScreen.main ?? NSScreen.screens.first)
+        let initialScreen = ScreenPinning.preferredScreen()
+        let initialStyles = NotchStyle.styles(for: initialScreen)
         let contentRect = NSRect(origin: .zero, size: initialStyles.collapsed.windowSize)
         notchView = NotchContentView(
             frame: contentRect,
@@ -37,15 +39,41 @@ final class NotchWindow: NSPanel {
                 self?.scheduleCollapse()
             }
         }
+        notchView.onSettingsRequested = { [weak self] in
+            self?.showSettings()
+        }
         contentView = notchView
     }
 
-    func anchorToActiveScreen() {
+    func anchorToPreferredScreen() {
         let styles = currentStyles()
         notchView.updateStyles(collapsed: styles.collapsed, expanded: styles.expanded, animated: false)
+        settingsWindow?.refresh()
 
         let targetSize = isExpanded ? styles.expanded.windowSize : styles.collapsed.windowSize
-        setFrame(frameForCurrentScreen(size: targetSize), display: true)
+        setFrame(frameForPreferredScreen(size: targetSize), display: true)
+    }
+
+    private func showSettings() {
+        let window = settingsWindow ?? NotchSettingsWindow()
+        settingsWindow = window
+        window.onRoleChanged = { [weak self] in
+            self?.notchView.reloadPreferences()
+        }
+        window.onDisplayChanged = { [weak self] in
+            self?.anchorToPreferredScreen()
+        }
+        window.onSkillChanged = { [weak self] in
+            self?.notchView.reloadPreferences()
+        }
+        window.onLanguageChanged = { [weak self] in
+            self?.notchView.reloadPreferences()
+            self?.settingsWindow?.refresh()
+        }
+        window.refresh()
+        window.centerNear(rect: frame)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func expand() {
@@ -69,7 +97,7 @@ final class NotchWindow: NSPanel {
         isExpanded = expanded
         let styles = currentStyles()
         let targetSize = expanded ? styles.expanded.windowSize : styles.collapsed.windowSize
-        let targetFrame = frameForCurrentScreen(size: targetSize)
+        let targetFrame = frameForPreferredScreen(size: targetSize)
 
         notchView.updateStyles(collapsed: styles.collapsed, expanded: styles.expanded, animated: false)
         notchView.setExpanded(expanded, animated: true)
@@ -82,11 +110,11 @@ final class NotchWindow: NSPanel {
     }
 
     private func currentStyles() -> (collapsed: NotchStyle, expanded: NotchStyle) {
-        NotchStyle.styles(for: NSScreen.main ?? NSScreen.screens.first)
+        NotchStyle.styles(for: ScreenPinning.preferredScreen())
     }
 
-    private func frameForCurrentScreen(size: NSSize) -> NSRect {
-        let screen = NSScreen.main ?? NSScreen.screens.first
+    private func frameForPreferredScreen(size: NSSize) -> NSRect {
+        let screen = ScreenPinning.preferredScreen()
         guard let frame = screen?.frame else {
             return NSRect(origin: self.frame.origin, size: size)
         }

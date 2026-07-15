@@ -8,6 +8,7 @@ struct TokenUsageSnapshot: Sendable {
     let recentTokens: Int
     let sourceBreakdown: [String: Int]
     let eventCount: Int
+    let latestEventAt: Date?
     let generatedAt: Date
 
     var hasRealData: Bool {
@@ -32,6 +33,9 @@ enum TokenUsageScanner {
         let claudeRoot = home.appendingPathComponent(".claude/projects")
         let codexRoot = home.appendingPathComponent(".codex/sessions")
         let codexArchiveRoot = home.appendingPathComponent(".codex/archived_sessions")
+        let hookLog = home
+            .appendingPathComponent(".vibe-hero")
+            .appendingPathComponent("token-events.jsonl")
 
         for file in jsonlFiles(modifiedSince: startOfDay, under: claudeRoot) {
             scanFile(file, source: "Claude", startOfDay: startOfDay, endOfDay: endOfDay, now: now, accumulator: &accumulator)
@@ -40,6 +44,17 @@ enum TokenUsageScanner {
         for file in codexFiles(for: now, sessionsRoot: codexRoot, archiveRoot: codexArchiveRoot, startOfDay: startOfDay) {
             scanFile(file, source: "Codex", startOfDay: startOfDay, endOfDay: endOfDay, now: now, accumulator: &accumulator)
         }
+
+        let coveredSources = Set(accumulator.sourceBreakdown.keys)
+        scanFile(
+            hookLog,
+            source: "Hook",
+            startOfDay: startOfDay,
+            endOfDay: endOfDay,
+            now: now,
+            skippedSources: coveredSources,
+            accumulator: &accumulator
+        )
 
         return accumulator.snapshot
     }
@@ -100,6 +115,7 @@ enum TokenUsageScanner {
         startOfDay: Date,
         endOfDay: Date,
         now: Date,
+        skippedSources: Set<String> = [],
         accumulator: inout TokenUsageAccumulator
     ) {
         guard let content = try? String(contentsOf: file, encoding: .utf8) else {
@@ -108,13 +124,21 @@ enum TokenUsageScanner {
 
         for rawLine in content.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = String(rawLine)
-            guard line.contains("\"usage\"") || line.contains("\"token_count\"") else {
+            guard line.contains("\"usage\"") ||
+                    line.contains("\"token_count\"") ||
+                    line.contains("\"payload\"") ||
+                    line.contains("\"total_tokens\"") ||
+                    line.contains("\"input_tokens\"") else {
                 continue
             }
 
             guard let event = parseLine(line, fallbackSource: source),
                   event.timestamp >= startOfDay,
                   event.timestamp < endOfDay else {
+                continue
+            }
+
+            if skippedSources.contains(event.source) {
                 continue
             }
 
@@ -129,6 +153,12 @@ enum TokenUsageScanner {
         }
 
         let timestamp = parseDate(object["timestamp"]) ?? parseDate(object["created_at"]) ?? Date.distantPast
+        let source = normalizedSource(object["source"] as? String) ?? fallbackSource
+
+        if let payload = object["payload"] as? [String: Any],
+           let usage = bestUsage(in: payload) {
+            return TokenUsageEvent(timestamp: timestamp, source: source, usage: usage)
+        }
 
         if fallbackSource == "Codex",
            let payload = object["payload"] as? [String: Any],
@@ -145,6 +175,10 @@ enum TokenUsageScanner {
 
         if let usage = object["usage"] as? [String: Any] {
             return TokenUsageEvent(timestamp: timestamp, source: fallbackSource, usage: usageFromClaude(usage))
+        }
+
+        if let usage = bestUsage(in: object) {
+            return TokenUsageEvent(timestamp: timestamp, source: source, usage: usage)
         }
 
         return nil
@@ -168,6 +202,71 @@ enum TokenUsageScanner {
         }
 
         return TokenUsage(input: input, output: output, cache: cache)
+    }
+
+    private static func bestUsage(in object: Any) -> TokenUsage? {
+        var candidates: [TokenUsage] = []
+        collectUsage(in: object, into: &candidates)
+        return candidates.max { $0.total < $1.total }
+    }
+
+    private static func collectUsage(in object: Any, into candidates: inout [TokenUsage]) {
+        if let dictionary = object as? [String: Any] {
+            let usage = usageFromGeneric(dictionary)
+            if usage.total > 0 {
+                candidates.append(usage)
+            }
+
+            for value in dictionary.values {
+                collectUsage(in: value, into: &candidates)
+            }
+            return
+        }
+
+        if let array = object as? [Any] {
+            for value in array {
+                collectUsage(in: value, into: &candidates)
+            }
+        }
+    }
+
+    private static func usageFromGeneric(_ usage: [String: Any]) -> TokenUsage {
+        let input = intValue(usage["input_tokens"]) + intValue(usage["inputTokens"])
+        let output = intValue(usage["output_tokens"]) +
+            intValue(usage["outputTokens"]) +
+            intValue(usage["reasoning_output_tokens"])
+        let cache = intValue(usage["cache_creation_input_tokens"]) +
+            intValue(usage["cache_read_input_tokens"]) +
+            intValue(usage["cached_input_tokens"]) +
+            intValue(usage["cacheTokens"])
+        let explicitTotal = intValue(usage["total_tokens"]) + intValue(usage["totalTokens"])
+
+        if input + output + cache > 0 {
+            return TokenUsage(input: input, output: output, cache: cache)
+        }
+
+        if explicitTotal > 0 {
+            return TokenUsage(input: explicitTotal, output: 0, cache: 0)
+        }
+
+        return TokenUsage(input: 0, output: 0, cache: 0)
+    }
+
+    private static func normalizedSource(_ rawSource: String?) -> String? {
+        guard let rawSource else {
+            return nil
+        }
+
+        switch rawSource.lowercased() {
+        case "claude", "claude code", "claudecode":
+            return "Claude"
+        case "codex":
+            return "Codex"
+        case "opencode", "open code":
+            return "OpenCode"
+        default:
+            return rawSource
+        }
     }
 
     private static func intValue(_ value: Any?) -> Int {
@@ -223,6 +322,7 @@ private struct TokenUsageAccumulator {
     var recentTokens = 0
     var sourceBreakdown: [String: Int] = [:]
     var eventCount = 0
+    var latestEventAt: Date?
     let generatedAt: Date
 
     mutating func add(_ event: TokenUsageEvent, now: Date) {
@@ -236,6 +336,9 @@ private struct TokenUsageAccumulator {
         cacheTokens += event.usage.cache
         sourceBreakdown[event.source, default: 0] += total
         eventCount += 1
+        if latestEventAt.map({ event.timestamp > $0 }) ?? true {
+            latestEventAt = event.timestamp
+        }
 
         if now.timeIntervalSince(event.timestamp) <= TokenUsageScanner.recentWindow {
             recentTokens += total
@@ -251,6 +354,7 @@ private struct TokenUsageAccumulator {
             recentTokens: recentTokens,
             sourceBreakdown: sourceBreakdown,
             eventCount: eventCount,
+            latestEventAt: latestEventAt,
             generatedAt: generatedAt
         )
     }

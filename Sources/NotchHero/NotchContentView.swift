@@ -6,20 +6,29 @@ final class NotchContentView: NSView {
 
     private let collapsedHUD = NSView()
     private let compactHeroView = PixelActorView(kind: .hero)
-    private let compactLevelLabel = NSTextField(labelWithString: "LV 7")
+    private let compactLevelLabel = NSTextField(labelWithString: "LV 0")
     private let compactTokenLabel = NSTextField(labelWithString: "184K")
+    private let compactHPLabel = NSTextField(labelWithString: "H88")
+    private let compactXPLabel = NSTextField(labelWithString: "X00")
     private let compactHPBar = PixelBarView()
     private let compactXPBar = PixelBarView()
 
     private let expandedHUD = NSView()
     private let battleScene = BattleSceneView()
-    private let titleLabel = NSTextField(labelWithString: "Notch Hero")
-    private let tokenLabel = NSTextField(labelWithString: "Today 184K")
-    private let rateLabel = NSTextField(labelWithString: "+812 XP/min")
-    private let monsterLabel = NSTextField(labelWithString: "Prompt Wraith")
-    private let combatLabel = NSTextField(labelWithString: "Codex strike converts tokens into XP")
+    private let titleLabel = NSTextField(labelWithString: "Vibe Hero")
+    private let tokenLabel = NSTextField(labelWithString: L10n.string(.todayTokens, "184K"))
+    private let rateLabel = NSTextField(labelWithString: L10n.string(.xpPerMinute, "812"))
+    private let skillLabel = NSTextField(labelWithString: L10n.string(.skillPointsShort, 0))
+    private let skillEnergyLabel = NSTextField(labelWithString: L10n.string(.skillEnergyPercent, 0, 100, 0))
+    private let skillEnergyBar = PixelBarView()
+    private let combatLabel = NSTextField(labelWithString: L10n.text(.tokenStreamStatus))
+    private let heroHPLabel = NSTextField(labelWithString: "HP 88%")
+    private let heroXPLabel = NSTextField(labelWithString: "XP 0%")
+    private let monsterHPLabel = NSTextField(labelWithString: L10n.string(.monsterHP, MonsterKind.promptWraith.shortName, 89, MonsterKind.promptWraith.maxHP, 74))
     private let heroHPBar = PixelBarView()
     private let heroXPBar = PixelBarView()
+    private let monsterHPBar = PixelBarView()
+    private let settingsButton = NSButton()
 
     private var trackingArea: NSTrackingArea?
     private var collapsedStyle: NotchStyle
@@ -27,17 +36,34 @@ final class NotchContentView: NSView {
     private var style: NotchStyle
     private var isExpanded = false
     private var usageTimer: Timer?
-    private var heroLevel = 7
+    private var monsterAttackTimer: Timer?
+    private var heroLevel = SkillProgress.loadHeroLevel()
+    private var heroExperience = HeroExperience.loadTotalXP()
+    private var currentXP = 0
+    private var requiredXP = 1
     private var xpProgress: CGFloat = 0
-    private var heroHealth: CGFloat = 0.58
+    private var heroHealth: CGFloat = 1
     private var monsterHealth: CGFloat = 0.74
     private var todayTokens = 0
     private var xpRate = 0
     private var activeSource = "No source"
     private var lastObservedTokens: Int?
+    private var lastTokenSpendAt: Date?
+    private var lastMonsterAttackAt: Date?
+    private var tokenActivityExpiresAt: Date?
+    private var monsterRespawnWorkItem: DispatchWorkItem?
+    private var currentMonster = MonsterKind.promptWraith
     private var hasRealUsageData = false
+    private var skillEnergy: CGFloat = 0
+    private var skillCooldownUntil: Date?
+    private var lastPrimaryAttackAt: Date?
+    private var lastSkillCastAt: Date?
+    private var lootMessageExpiresAt: Date?
+    private var isDefeated = false
+    private var selectedRole = HeroRole.load()
 
     var onHoverChanged: ((Bool) -> Void)?
+    var onSettingsRequested: (() -> Void)?
 
     init(frame frameRect: NSRect, collapsedStyle: NotchStyle, expandedStyle: NotchStyle) {
         self.collapsedStyle = collapsedStyle
@@ -48,6 +74,18 @@ final class NotchContentView: NSView {
         setupLayers()
         setupCollapsedHUD()
         setupExpandedHUD()
+        applyExperienceState(saveLevel: true)
+        battleScene.monsterKind = currentMonster
+        battleScene.onSustainedHit = { [weak self] damageFraction in
+            self?.applySustainedMonsterDamage(damageFraction)
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .notchHeroLanguageChanged,
+            object: nil
+        )
+        updateRoleUI()
         updateGameLabels()
         setExpanded(false, animated: false)
         startUsageMonitor()
@@ -55,6 +93,10 @@ final class NotchContentView: NSView {
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func updateTrackingAreas() {
@@ -82,6 +124,10 @@ final class NotchContentView: NSView {
         onHoverChanged?(false)
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     func updateStyles(collapsed: NotchStyle, expanded: NotchStyle, animated: Bool) {
         collapsedStyle = collapsed
         expandedStyle = expanded
@@ -91,11 +137,13 @@ final class NotchContentView: NSView {
 
     func setExpanded(_ isExpanded: Bool, animated: Bool) {
         self.isExpanded = isExpanded
+        battleScene.rendersCombatEffects = isExpanded
         style = isExpanded ? expandedStyle : collapsedStyle
 
         let changes = {
             self.collapsedHUD.alphaValue = isExpanded ? 0 : 1
             self.expandedHUD.alphaValue = isExpanded ? 1 : 0
+            self.expandedHUD.isHidden = !isExpanded
             self.glowLayer.opacity = isExpanded ? 0.72 : 0.0
             self.needsLayout = true
             self.layoutSubtreeIfNeeded()
@@ -183,19 +231,31 @@ final class NotchContentView: NSView {
         compactTokenLabel.lineBreakMode = .byTruncatingMiddle
         compactTokenLabel.maximumNumberOfLines = 1
 
+        [compactHPLabel, compactXPLabel].forEach {
+            $0.font = NSFont.monospacedDigitSystemFont(ofSize: 6, weight: .bold)
+            $0.textColor = NSColor.white.withAlphaComponent(0.72)
+            $0.alignment = .left
+            $0.lineBreakMode = .byClipping
+            $0.maximumNumberOfLines = 1
+        }
+        compactHPLabel.textColor = NSColor(red: 0.20, green: 0.95, blue: 0.48, alpha: 1.0)
+        compactXPLabel.textColor = NSColor(red: 0.0, green: 0.90, blue: 0.82, alpha: 1.0)
+
         compactHPBar.fillColor = NSColor(red: 0.20, green: 0.95, blue: 0.48, alpha: 1.0)
         compactXPBar.fillColor = NSColor(red: 0.0, green: 0.90, blue: 0.82, alpha: 1.0)
 
         collapsedHUD.addSubview(compactHeroView)
         collapsedHUD.addSubview(compactLevelLabel)
         collapsedHUD.addSubview(compactTokenLabel)
+        collapsedHUD.addSubview(compactHPLabel)
+        collapsedHUD.addSubview(compactXPLabel)
         collapsedHUD.addSubview(compactHPBar)
         collapsedHUD.addSubview(compactXPBar)
         addSubview(collapsedHUD)
     }
 
     private func setupExpandedHUD() {
-        [titleLabel, tokenLabel, rateLabel, monsterLabel, combatLabel].forEach {
+        [titleLabel, tokenLabel, rateLabel, skillLabel, skillEnergyLabel, combatLabel].forEach {
             $0.lineBreakMode = .byTruncatingTail
         }
 
@@ -211,25 +271,58 @@ final class NotchContentView: NSView {
         rateLabel.textColor = NSColor(red: 0.0, green: 0.95, blue: 0.78, alpha: 1.0)
         rateLabel.alignment = .right
 
-        monsterLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-        monsterLabel.textColor = NSColor(red: 1.0, green: 0.55, blue: 0.42, alpha: 1.0)
-        monsterLabel.alignment = .center
+        skillLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        skillLabel.textColor = NSColor(red: 1.0, green: 0.74, blue: 0.20, alpha: 1.0)
+        skillLabel.alignment = .right
+
+        skillEnergyLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+        skillEnergyLabel.textColor = NSColor(red: 1.0, green: 0.74, blue: 0.20, alpha: 1.0)
+        skillEnergyLabel.alignment = .left
 
         combatLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         combatLabel.textColor = NSColor.white.withAlphaComponent(0.58)
         combatLabel.alignment = .center
 
+        [heroHPLabel, heroXPLabel, monsterHPLabel].forEach {
+            $0.font = NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .bold)
+            $0.textColor = NSColor.white.withAlphaComponent(0.76)
+            $0.alignment = .left
+            $0.lineBreakMode = .byClipping
+        }
+        heroHPLabel.textColor = NSColor(red: 0.20, green: 0.95, blue: 0.48, alpha: 1.0)
+        heroXPLabel.textColor = NSColor(red: 0.0, green: 0.90, blue: 0.82, alpha: 1.0)
+        monsterHPLabel.textColor = currentMonster.hpColor
+
         heroHPBar.fillColor = NSColor(red: 0.20, green: 0.95, blue: 0.48, alpha: 1.0)
         heroXPBar.fillColor = NSColor(red: 0.0, green: 0.90, blue: 0.82, alpha: 1.0)
+        monsterHPBar.fillColor = currentMonster.hpColor
+        monsterHPBar.trackColor = NSColor.white.withAlphaComponent(0.12)
+        skillEnergyBar.fillColor = NSColor(red: 1.0, green: 0.74, blue: 0.20, alpha: 1.0)
+        skillEnergyBar.trackColor = NSColor.white.withAlphaComponent(0.12)
+
+        settingsButton.image = NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: L10n.text(.settingsTitle))
+        settingsButton.imagePosition = .imageOnly
+        settingsButton.bezelStyle = .regularSquare
+        settingsButton.isBordered = false
+        settingsButton.contentTintColor = NSColor.white.withAlphaComponent(0.72)
+        settingsButton.target = self
+        settingsButton.action = #selector(openSettings)
 
         expandedHUD.addSubview(titleLabel)
         expandedHUD.addSubview(tokenLabel)
         expandedHUD.addSubview(rateLabel)
-        expandedHUD.addSubview(monsterLabel)
+        expandedHUD.addSubview(skillLabel)
+        expandedHUD.addSubview(skillEnergyLabel)
+        expandedHUD.addSubview(skillEnergyBar)
         expandedHUD.addSubview(battleScene)
+        expandedHUD.addSubview(heroHPLabel)
         expandedHUD.addSubview(heroHPBar)
+        expandedHUD.addSubview(heroXPLabel)
         expandedHUD.addSubview(heroXPBar)
+        expandedHUD.addSubview(monsterHPLabel)
+        expandedHUD.addSubview(monsterHPBar)
         expandedHUD.addSubview(combatLabel)
+        expandedHUD.addSubview(settingsButton)
         addSubview(expandedHUD)
     }
 
@@ -252,8 +345,11 @@ final class NotchContentView: NSView {
 
         compactLevelLabel.frame = NSRect(x: textX, y: labelY, width: levelWidth, height: labelHeight)
         compactTokenLabel.frame = NSRect(x: tokenX, y: labelY, width: max(34, textWidth - levelWidth - 6), height: labelHeight)
-        compactHPBar.frame = NSRect(x: textX, y: hpY, width: textWidth, height: barHeight)
-        compactXPBar.frame = NSRect(x: textX, y: xpY, width: textWidth, height: barHeight)
+        let compactBarLabelWidth: CGFloat = 20
+        compactHPLabel.frame = NSRect(x: textX, y: hpY - 2, width: compactBarLabelWidth, height: 7)
+        compactXPLabel.frame = NSRect(x: textX, y: xpY - 2, width: compactBarLabelWidth, height: 7)
+        compactHPBar.frame = NSRect(x: textX + compactBarLabelWidth, y: hpY, width: max(12, textWidth - compactBarLabelWidth), height: barHeight)
+        compactXPBar.frame = NSRect(x: textX + compactBarLabelWidth, y: xpY, width: max(12, textWidth - compactBarLabelWidth), height: barHeight)
     }
 
     private func layoutExpandedHUD(in notchRect: NSRect) {
@@ -261,15 +357,69 @@ final class NotchContentView: NSView {
 
         let width = expandedHUD.bounds.width
         let height = expandedHUD.bounds.height
-        titleLabel.frame = NSRect(x: 4, y: height - 18, width: 120, height: 15)
-        tokenLabel.frame = NSRect(x: width - 132, y: height - 18, width: 128, height: 15)
-        rateLabel.frame = NSRect(x: width - 132, y: height - 34, width: 128, height: 14)
-        monsterLabel.frame = NSRect(x: width / 2 - 56, y: height - 34, width: 112, height: 14)
+        let rightColumnWidth: CGFloat = 132
+        let rightColumnX = width - rightColumnWidth - 30
+        let leftColumnWidth = max(132, min(170, rightColumnX - 14))
 
-        battleScene.frame = NSRect(x: 8, y: 27, width: width - 16, height: max(44, height - 66))
-        heroHPBar.frame = NSRect(x: 8, y: 17, width: width * 0.42, height: 4)
-        heroXPBar.frame = NSRect(x: width * 0.50, y: 17, width: width * 0.42, height: 4)
+        titleLabel.frame = NSRect(x: 4, y: height - 18, width: leftColumnWidth, height: 15)
+        settingsButton.frame = NSRect(x: width - 24, y: height - 22, width: 20, height: 20)
+        skillEnergyLabel.frame = NSRect(x: 4, y: height - 34, width: leftColumnWidth, height: 11)
+        skillEnergyBar.frame = NSRect(x: 4, y: height - 43, width: leftColumnWidth, height: 4)
+        tokenLabel.frame = NSRect(x: rightColumnX, y: height - 18, width: rightColumnWidth, height: 15)
+        rateLabel.frame = NSRect(x: rightColumnX, y: height - 34, width: rightColumnWidth, height: 14)
+        skillLabel.frame = NSRect(x: rightColumnX, y: height - 47, width: rightColumnWidth, height: 12)
+
+        let battleY: CGFloat = 31
+        let topStatusBottom = min(skillEnergyBar.frame.minY, skillLabel.frame.minY)
+        let battleTop = max(battleY + 44, topStatusBottom - 6)
+        battleScene.frame = NSRect(x: 8, y: battleY, width: width - 16, height: battleTop - battleY)
+        let statGap: CGFloat = 8
+        let statWidth = max(110, (width - 16 - statGap * 2) / 3)
+        let leftStatX: CGFloat = 8
+        let middleStatX = leftStatX + statWidth + statGap
+        let monsterStatX = width - statWidth - 8
+        heroHPLabel.frame = NSRect(x: leftStatX, y: 20, width: statWidth, height: 9)
+        heroHPBar.frame = NSRect(x: leftStatX, y: 15, width: statWidth, height: 4)
+        heroXPLabel.frame = NSRect(x: middleStatX, y: 20, width: statWidth, height: 9)
+        heroXPBar.frame = NSRect(x: middleStatX, y: 15, width: statWidth, height: 4)
+        monsterHPLabel.frame = NSRect(x: monsterStatX, y: 20, width: statWidth, height: 9)
+        monsterHPBar.frame = NSRect(x: monsterStatX, y: 15, width: statWidth, height: 4)
         combatLabel.frame = NSRect(x: 8, y: 2, width: width - 16, height: 13)
+
+        [titleLabel, tokenLabel, rateLabel, skillLabel, skillEnergyLabel, heroHPLabel, heroXPLabel, monsterHPLabel, combatLabel, settingsButton].forEach {
+            expandedHUD.addSubview($0, positioned: .above, relativeTo: nil)
+        }
+        expandedHUD.addSubview(skillEnergyBar, positioned: .above, relativeTo: battleScene)
+    }
+
+    @objc private func openSettings() {
+        onSettingsRequested?()
+    }
+
+    private func updateRoleUI() {
+        titleLabel.stringValue = L10n.string(.appTitleWithRole, selectedRole.label)
+        compactHeroView.heroRole = selectedRole
+        battleScene.heroRole = selectedRole
+        updateDefeatPresentation()
+    }
+
+    func reloadPreferences() {
+        selectedRole = HeroRole.load()
+        reloadLocalizedText()
+    }
+
+    @objc private func languageChanged() {
+        reloadLocalizedText()
+    }
+
+    private func reloadLocalizedText() {
+        settingsButton.image = NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: L10n.text(.settingsTitle))
+        battleScene.reloadLocalization()
+        updateRoleUI()
+        updateGameLabels()
+        if !hasRealUsageData {
+            applyNoDataLabels()
+        }
     }
 
     private func startUsageMonitor() {
@@ -279,6 +429,24 @@ final class NotchContentView: NSView {
                 self?.refreshUsage()
             }
         }
+
+        let attackTimer = Timer(timeInterval: CombatTiming.monsterAttackInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tickMonsterAttack()
+            }
+        }
+        RunLoop.main.add(attackTimer, forMode: .common)
+        monsterAttackTimer = attackTimer
+    }
+
+    private func tickMonsterAttack() {
+        let now = Date()
+        let hasActiveTokens = tokenActivityExpiresAt.map { $0 > now } ?? false
+        guard hasRealUsageData, !hasActiveTokens else {
+            return
+        }
+        _ = maybeMonsterAttack(now: now)
+        updateGameLabels()
     }
 
     private func refreshUsage() {
@@ -291,87 +459,466 @@ final class NotchContentView: NSView {
     }
 
     private func applyUsageSnapshot(_ snapshot: TokenUsageSnapshot) {
+        let now = snapshot.generatedAt
         hasRealUsageData = snapshot.hasRealData
         todayTokens = snapshot.totalTokens
         activeSource = snapshot.dominantSource
         xpRate = snapshot.recentTokens / 10
-        heroLevel = level(for: snapshot.totalTokens)
-        xpProgress = progressToNextLevel(for: snapshot.totalTokens)
-        heroHealth = snapshot.recentTokens > 0 ? 0.88 : 0.58
-
         let previousTokens = lastObservedTokens
         lastObservedTokens = snapshot.totalTokens
 
         guard snapshot.hasRealData else {
-            compactLevelLabel.stringValue = "NO DATA"
-            compactTokenLabel.stringValue = "--"
-            tokenLabel.stringValue = "No local usage"
-            rateLabel.stringValue = "+0 XP/min"
-            monsterLabel.stringValue = "Waiting"
-            combatLabel.stringValue = "No local token events found today"
+            setTokenActivity(false)
+            applyNoDataLabels()
             updateGameLabels()
             return
         }
 
         if let previousTokens, snapshot.totalTokens > previousTokens {
+            refreshTokenActivity(now: now, didSpendTokens: true, latestEventAt: snapshot.latestEventAt)
+            lastTokenSpendAt = now
+            lastMonsterAttackAt = nil
+            if isDefeated {
+                reviveHeroFromTokenSpend()
+                updateGameLabels()
+                return
+            }
+
+            heroHealth = min(1, heroHealth + 0.08)
             tickBattle(tokenDelta: snapshot.totalTokens - previousTokens)
         } else {
-            combatLabel.stringValue = "Watching \(activeSource) token logs"
+            refreshTokenActivity(now: now, didSpendTokens: false, latestEventAt: snapshot.latestEventAt)
+            if lastTokenSpendAt == nil {
+                lastTokenSpendAt = snapshot.latestEventAt
+            }
+            if lootMessageExpiresAt.map({ $0 <= now }) != false {
+                combatLabel.stringValue = L10n.string(.watchingSourceLogs, activeSource)
+            }
             updateGameLabels()
         }
     }
 
+    private func applyNoDataLabels() {
+        compactLevelLabel.stringValue = L10n.text(.noData)
+        compactTokenLabel.stringValue = "--"
+        tokenLabel.stringValue = L10n.text(.noLocalUsage)
+        rateLabel.stringValue = L10n.string(.xpPerMinute, "0")
+        combatLabel.stringValue = L10n.text(.noLocalTokenEvents)
+    }
+
     private func tickBattle(tokenDelta: Int) {
-        let damage = min(999, max(1, tokenDelta / 75))
-        let xpGain = min(0.18, CGFloat(tokenDelta) / 80_000)
+        guard !isDefeated else {
+            combatLabel.stringValue = L10n.text(.heroDefeated)
+            return
+        }
 
-        monsterHealth -= CGFloat(damage) / 180
-        if monsterHealth <= 0.08 {
-            monsterHealth = 1
-            combatLabel.stringValue = "\(activeSource) defeated Prompt Wraith"
+        let now = Date()
+        let baseDamage = CGFloat(min(999, max(1, tokenDelta / 75)))
+        let damage = min(999, max(1, Int(baseDamage * SkillProgress.damageMultiplier())))
+        let damageFraction = min(0.42, max(0.025, CGFloat(damage) * selectedRole.damageMultiplier / 160))
+        gainSkillEnergy(by: SkillCharge.tokenAttack)
+
+        if let reward = damageMonster(by: damageFraction) {
+            combatLabel.stringValue = defeatText(for: reward)
         } else {
-            combatLabel.stringValue = "\(activeSource) +\(formatCompact(tokenDelta)) tokens"
+            combatLabel.stringValue = L10n.string(.sourceUsageTokens, activeSource, formatCompact(tokenDelta))
         }
 
-        xpProgress += xpGain
-        if xpProgress >= 1 {
-            xpProgress -= 1
-            heroLevel += 1
-            combatLabel.stringValue = "Level up from real token XP"
+        if canPlayPrimaryAttack(now: now) {
+            lastPrimaryAttackAt = now
+            battleScene.playAttack(damage: damage)
         }
-
-        battleScene.monsterHealth = monsterHealth
-        battleScene.playAttack(damage: damage)
+        maybeCastSkill(now: now)
         updateGameLabels()
+    }
+
+    private func applySustainedMonsterDamage(_ damageFraction: CGFloat) {
+        guard !isDefeated,
+              hasRealUsageData,
+              tokenActivityExpiresAt.map({ $0 > Date() }) == true else {
+            return
+        }
+
+        if let reward = damageMonster(by: damageFraction) {
+            combatLabel.stringValue = defeatText(for: reward)
+        }
+        gainSkillEnergy(by: SkillCharge.sustainedHit)
+        maybeCastSkill(now: Date())
+        updateGameLabels()
+    }
+
+    @discardableResult
+    private func damageMonster(by damageFraction: CGFloat) -> DefeatReward? {
+        guard !isDefeated, monsterHealth > 0 else {
+            return nil
+        }
+
+        monsterRespawnWorkItem?.cancel()
+        let boostedDamage = max(0, damageFraction) * ItemSystem.damageMultiplier()
+        monsterHealth = max(0, monsterHealth - boostedDamage)
+        battleScene.monsterHealth = monsterHealth
+
+        guard monsterHealth <= 0 else {
+            return nil
+        }
+
+        var reward = grantExperience(for: currentMonster)
+        battleScene.playMonsterDeath()
+        reward.loot = awardLoot()
+        scheduleMonsterRespawn()
+        return reward
+    }
+
+    private func scheduleMonsterRespawn() {
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            currentMonster = currentMonster.next
+            monsterHealth = 1
+            battleScene.monsterKind = currentMonster
+            battleScene.monsterHealth = monsterHealth
+            monsterHPLabel.textColor = currentMonster.hpColor
+            monsterHPBar.fillColor = currentMonster.hpColor
+            compactHeroView.monsterKind = currentMonster
+            battleScene.playMonsterRespawn()
+            if hasRealUsageData, lootMessageExpiresAt.map({ $0 <= Date() }) != false {
+                combatLabel.stringValue = L10n.string(.monsterRespawned, currentMonster.displayName)
+            }
+            updateGameLabels()
+        }
+
+        monsterRespawnWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: workItem)
+    }
+
+    private func maybeMonsterAttack(now: Date) -> Bool {
+        guard !isDefeated else {
+            combatLabel.stringValue = L10n.text(.heroDefeated)
+            return true
+        }
+
+        if let lastMonsterAttackAt,
+           now.timeIntervalSince(lastMonsterAttackAt) < CombatTiming.idleAttackCooldown {
+            combatLabel.stringValue = L10n.string(.monsterAttackingNoTokens, currentMonster.shortName)
+            return true
+        }
+
+        lastMonsterAttackAt = now
+        let damageFraction = CombatTiming.monsterDamagePerHit * selectedRole.idleDamageMultiplier
+        let damagePoints = Double(damageFraction * CGFloat(GameStats.heroMaxHP))
+        heroHealth = max(0, heroHealth - damageFraction)
+        combatLabel.stringValue = L10n.string(.monsterAttackingNoTokens, currentMonster.shortName)
+        battleScene.playMonsterAttack(damage: damagePoints)
+        playCompactMonsterAttack()
+        if heroHealth <= 0 {
+            enterDefeatedState()
+        }
+        return true
     }
 
     private func updateGameLabels() {
         if hasRealUsageData {
             compactLevelLabel.stringValue = "LV \(heroLevel)"
             compactTokenLabel.stringValue = formatCompact(todayTokens)
-            tokenLabel.stringValue = "Today \(formatCompact(todayTokens))"
-            monsterLabel.stringValue = "\(activeSource) Wraith"
+            tokenLabel.stringValue = L10n.string(.todayTokensGold, formatCompact(todayTokens), ItemSystem.gold)
         }
-        rateLabel.stringValue = "+\(formatCompact(xpRate)) XP/min"
+        let boostRemaining = ItemSystem.powerBoostRemaining()
+        rateLabel.stringValue = boostRemaining > 0
+            ? L10n.string(.tokenRateBuff, formatCompact(xpRate), boostRemaining)
+            : L10n.string(.xpPerMinute, formatCompact(xpRate))
+        updateSkillUI()
+        updateStatLabels()
         compactHPBar.value = heroHealth
         compactXPBar.value = xpProgress
         heroHPBar.value = heroHealth
         heroXPBar.value = xpProgress
+        monsterHPBar.value = monsterHealth
         battleScene.monsterHealth = monsterHealth
+        updateDefeatPresentation()
     }
 
-    private func level(for tokens: Int) -> Int {
-        max(1, Int(sqrt(Double(max(tokens, 0)) / 1_200.0)) + 1)
-    }
-
-    private func progressToNextLevel(for tokens: Int) -> CGFloat {
-        let currentLevel = level(for: tokens)
-        let currentFloor = pow(Double(currentLevel - 1), 2) * 1_200
-        let nextFloor = pow(Double(currentLevel), 2) * 1_200
-        guard nextFloor > currentFloor else {
-            return 0
+    private func refreshTokenActivity(now: Date, didSpendTokens: Bool, latestEventAt _: Date?) {
+        if didSpendTokens {
+            tokenActivityExpiresAt = now.addingTimeInterval(TokenActivity.activeDuration)
+        } else {
+            tokenActivityExpiresAt = nil
         }
-        return CGFloat((Double(tokens) - currentFloor) / (nextFloor - currentFloor))
+
+        let isActive = tokenActivityExpiresAt.map { $0 > now } ?? false
+        if !isActive {
+            tokenActivityExpiresAt = nil
+        }
+        setTokenActivity(isActive)
+    }
+
+    private func playCompactMonsterAttack() {
+        guard !isExpanded else {
+            return
+        }
+
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -3, 2, -1, 0]
+        shake.duration = 0.24
+        shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        compactHeroView.layer?.add(shake, forKey: "compactMonsterHit")
+
+        let flash = CAKeyframeAnimation(keyPath: "opacity")
+        flash.values = [1.0, 0.42, 1.0]
+        flash.duration = 0.24
+        compactHPBar.layer?.add(flash, forKey: "compactMonsterHitFlash")
+    }
+
+    private func setTokenActivity(_ active: Bool) {
+        let effectiveActive = active && !isDefeated
+        compactHeroView.setTokenActivity(effectiveActive)
+        battleScene.tokenActivity = effectiveActive
+    }
+
+    private func updateSkillUI() {
+        let loadout = SkillProgress.loadout()
+        if battleScene.skillLoadout != loadout {
+            battleScene.skillLoadout = loadout
+        }
+        let points = SkillProgress.availablePoints(heroLevel: heroLevel)
+        skillLabel.stringValue = points == 1 ? L10n.text(.skillPointShort) : L10n.string(.skillPointsShort, points)
+        skillEnergyBar.value = skillEnergy
+
+        guard !isDefeated else {
+            skillEnergyLabel.stringValue = L10n.text(.heroDefeated)
+            return
+        }
+
+        let unlockedSkillCount = HeroSkill.allCases.filter { loadout.rank(for: $0) > 0 }.count
+        let castCandidates = SkillProgress.autoCastCandidates(loadout: loadout)
+        guard !castCandidates.isEmpty else {
+            skillEnergyLabel.stringValue = unlockedSkillCount == 0 ? L10n.text(.noSkillEquipped) : L10n.text(.noSkillEnabled)
+            return
+        }
+
+        if let skillCooldownUntil, skillCooldownUntil > Date() {
+            let seconds = max(1, Int(ceil(skillCooldownUntil.timeIntervalSinceNow)))
+            skillEnergyLabel.stringValue = L10n.string(.skillCooldownStatus, seconds)
+        } else if skillEnergy >= 1 {
+            skillEnergyLabel.stringValue = L10n.string(.skillReadyStatus, "\(castCandidates.count)")
+        } else {
+            let energy = percentValue(skillEnergy)
+            skillEnergyLabel.stringValue = L10n.string(.skillEnergyPercent, energy, 100, energy)
+        }
+    }
+
+    private func gainSkillEnergy(by amount: CGFloat) {
+        guard !isDefeated else {
+            return
+        }
+
+        let loadout = SkillProgress.loadout()
+        guard loadout.totalRanks > 0 else {
+            return
+        }
+
+        let treeBonus = min(0.05, CGFloat(loadout.totalRanks) * 0.004)
+        let overclockBonus = CGFloat(loadout.overclockCore) * 0.01
+        skillEnergy = min(1, skillEnergy + amount + treeBonus + overclockBonus)
+    }
+
+    private func maybeCastSkill(now: Date) {
+        guard !isDefeated, skillEnergy >= 1 else {
+            return
+        }
+        if let skillCooldownUntil, skillCooldownUntil > now {
+            return
+        }
+        if let lastSkillCastAt,
+           now.timeIntervalSince(lastSkillCastAt) < CombatTiming.minimumSkillCastInterval {
+            return
+        }
+
+        let loadout = SkillProgress.loadout()
+        guard let castSkill = SkillProgress.randomCastSkill(loadout: loadout) else {
+            return
+        }
+
+        let rank = max(1, loadout.rank(for: castSkill))
+        let damageFraction = skillDamageFraction(for: castSkill, rank: rank, loadout: loadout)
+        let displayDamage = max(1, Int(round(damageFraction * 260)))
+        let cooldown = max(castSkill.castCooldown, CombatTiming.minimumSkillCastInterval)
+        skillEnergy = 0
+        skillCooldownUntil = now.addingTimeInterval(cooldown)
+        lastSkillCastAt = now
+        battleScene.playSkillCast(skill: castSkill, rank: rank, damage: displayDamage)
+        DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) { [weak self] in
+            self?.maybeCastSkill(now: Date())
+            self?.updateGameLabels()
+        }
+
+        if let reward = damageMonster(by: damageFraction) {
+            combatLabel.stringValue = defeatText(for: reward)
+        } else {
+            combatLabel.stringValue = L10n.string(.skillCasting, castSkill.name)
+        }
+    }
+
+    private func skillDamageFraction(for skill: HeroSkill, rank: Int, loadout: SkillLoadout) -> CGFloat {
+        let tierDamage = CGFloat(skill.treeTier) * 0.028
+        let rankDamage = CGFloat(rank) * 0.026
+        let loadoutDamage = CGFloat(loadout.effectTier) * 0.006
+        let roleDamage = selectedRole.damageMultiplier
+        return min(0.38, (0.07 + tierDamage + rankDamage + loadoutDamage) * roleDamage)
+    }
+
+    private func canPlayPrimaryAttack(now: Date) -> Bool {
+        guard let lastPrimaryAttackAt else {
+            return true
+        }
+        return now.timeIntervalSince(lastPrimaryAttackAt) >= CombatTiming.minimumPrimaryAttackInterval
+    }
+
+    private func applyExperienceState(saveLevel: Bool) {
+        let state = ExperienceCurve.state(for: heroExperience)
+        heroLevel = state.level
+        currentXP = state.currentXP
+        requiredXP = state.requiredXP
+        xpProgress = state.progress
+        if saveLevel {
+            SkillProgress.saveHeroLevel(heroLevel)
+        }
+    }
+
+    private func grantExperience(for monster: MonsterKind) -> DefeatReward {
+        let previousLevel = heroLevel
+        let rewardXP = monster.xpReward
+        heroExperience += rewardXP
+        HeroExperience.saveTotalXP(heroExperience)
+        applyExperienceState(saveLevel: true)
+        return DefeatReward(
+            monsterName: monster.displayName,
+            xpGained: rewardXP,
+            didLevelUp: heroLevel > previousLevel,
+            level: heroLevel,
+            loot: nil
+        )
+    }
+
+    private func defeatText(for reward: DefeatReward) -> String {
+        if let loot = reward.loot {
+            let summary = lootSummary(for: loot)
+            lootMessageExpiresAt = Date().addingTimeInterval(4)
+            return L10n.string(.defeatedMonsterXPAndLoot, reward.monsterName, reward.xpGained, summary)
+        }
+        if reward.didLevelUp {
+            return L10n.string(.levelUpFromMonsterXP, reward.monsterName, reward.xpGained, reward.level)
+        }
+        return L10n.string(.defeatedMonsterXP, reward.monsterName, reward.xpGained)
+    }
+
+    private func awardLoot() -> LootDrop? {
+        guard let drop = ItemSystem.rollDrop() else {
+            return nil
+        }
+
+        let awardedDrop: LootDrop
+        switch drop.kind {
+        case .healthPotion:
+            let previousHP = statValue(heroHealth, maxValue: GameStats.heroMaxHP)
+            heroHealth = min(1, heroHealth + CGFloat(drop.amount) / CGFloat(GameStats.heroMaxHP))
+            let healedHP = max(0, statValue(heroHealth, maxValue: GameStats.heroMaxHP) - previousHP)
+            awardedDrop = LootDrop(kind: .healthPotion, amount: healedHP)
+        case .powerBoost:
+            ItemSystem.activatePowerBoost()
+            awardedDrop = drop
+        case .gold:
+            ItemSystem.addGold(drop.amount)
+            awardedDrop = drop
+        }
+
+        battleScene.playLootDrop(awardedDrop)
+        return awardedDrop
+    }
+
+    private func lootSummary(for drop: LootDrop) -> String {
+        switch drop.kind {
+        case .healthPotion:
+            L10n.string(.lootPotionSummary, drop.kind.name, drop.amount)
+        case .powerBoost:
+            L10n.string(.lootBuffSummary, drop.kind.name, drop.amount)
+        case .gold:
+            L10n.string(.lootGoldSummary, drop.amount)
+        }
+    }
+
+    private func updateStatLabels() {
+        let hpPercent = percentValue(heroHealth)
+        let xpPercent = percentValue(xpProgress)
+        let heroHP = statValue(heroHealth, maxValue: GameStats.heroMaxHP)
+        let monsterMaxHP = currentMonster.maxHP
+        let monsterHP = statValue(monsterHealth, maxValue: monsterMaxHP)
+        compactHPLabel.stringValue = "H\(hpPercent)"
+        compactXPLabel.stringValue = "X\(xpPercent)"
+        heroHPLabel.stringValue = L10n.string(.hpPercent, heroHP, hpPercent)
+        heroXPLabel.stringValue = L10n.string(.xpPercent, formatCompact(currentXP), formatCompact(requiredXP), xpPercent)
+        monsterHPLabel.stringValue = L10n.string(.monsterHP, currentMonster.shortName, monsterHP, monsterMaxHP, percentValue(monsterHealth))
+    }
+
+    private func enterDefeatedState() {
+        guard !isDefeated else {
+            return
+        }
+
+        isDefeated = true
+        heroHealth = 0
+        setTokenActivity(false)
+        combatLabel.stringValue = L10n.text(.heroDefeated)
+        updateDefeatPresentation()
+        updateGameLabels()
+    }
+
+    private func reviveHeroFromTokenSpend() {
+        isDefeated = false
+        heroHealth = CombatTiming.reviveHealth
+        lastMonsterAttackAt = nil
+        combatLabel.stringValue = L10n.text(.heroReviving)
+        updateDefeatPresentation()
+        playReviveEffects(restoredHP: statValue(CombatTiming.reviveHealth, maxValue: GameStats.heroMaxHP))
+        setTokenActivity(false)
+    }
+
+    private func playReviveEffects(restoredHP: Int) {
+        battleScene.playHeroReviveHeal(restoredHP: restoredHP)
+
+        let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
+        pulse.values = [0.82, 1.22, 1.0]
+        pulse.keyTimes = [0, 0.48, 1]
+        pulse.duration = 0.42
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        compactHeroView.layer?.add(pulse, forKey: "compactHeroRevivePulse")
+
+        let glow = CAKeyframeAnimation(keyPath: "opacity")
+        glow.values = [0.45, 1.0, 0.72]
+        glow.keyTimes = [0, 0.44, 1]
+        glow.duration = 0.42
+        glow.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        compactHPBar.layer?.add(glow, forKey: "compactHPReviveGlow")
+    }
+
+    private func updateDefeatPresentation() {
+        compactHeroView.monsterKind = currentMonster
+        if isDefeated {
+            compactHeroView.kind = .monster
+            compactHeroView.setTokenActivity(false)
+        } else {
+            compactHeroView.kind = .hero
+        }
+        battleScene.heroDefeated = isDefeated
+    }
+
+    private func percentValue(_ value: CGFloat) -> Int {
+        min(100, max(0, Int(round(value * 100))))
+    }
+
+    private func statValue(_ value: CGFloat, maxValue: Int) -> Int {
+        min(maxValue, max(0, Int(round(value * CGFloat(maxValue)))))
     }
 
     private func formatCompact(_ value: Int) -> String {
@@ -418,7 +965,7 @@ struct NotchStyle {
     }
 
     private static func makeExpanded(collapsed: NotchStyle) -> NotchStyle {
-        let height = round(collapsed.notchSize.height + 96)
+        let height = round(collapsed.notchSize.height + 112)
         let width = round(max(468, collapsed.notchSize.width + 260))
 
         return NotchStyle(
@@ -450,5 +997,231 @@ private enum NotchShape {
         path.closeSubpath()
 
         return path
+    }
+}
+
+private enum CombatTiming {
+    static let monsterAttackInterval: TimeInterval = 2
+    static let idleAttackCooldown: TimeInterval = 1.8
+    static let monsterDamagePerHit: CGFloat = 1 / 900
+    static let minimumPrimaryAttackInterval: TimeInterval = 2.5
+    static let minimumSkillCastInterval: TimeInterval = 14
+    static let reviveHealth: CGFloat = 0.28
+}
+
+private enum TokenActivity {
+    static let activeDuration: TimeInterval = 6
+}
+
+private enum SkillCharge {
+    static let tokenAttack: CGFloat = 0.18
+    static let sustainedHit: CGFloat = 0.035
+}
+
+private struct LevelState {
+    let level: Int
+    let progress: CGFloat
+    let currentXP: Int
+    let requiredXP: Int
+}
+
+private struct DefeatReward {
+    let monsterName: String
+    let xpGained: Int
+    let didLevelUp: Bool
+    let level: Int
+    var loot: LootDrop?
+}
+
+private enum GameStats {
+    static let heroMaxHP = 100
+}
+
+private enum HeroExperience {
+    private static let totalXPKey = "NotchHero.heroTotalXP"
+    private static let migrationKey = "NotchHero.heroXPInitializedFromLevel"
+
+    static func loadTotalXP() -> Int {
+        if UserDefaults.standard.object(forKey: totalXPKey) != nil {
+            return max(0, UserDefaults.standard.integer(forKey: totalXPKey))
+        }
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return 0
+        }
+
+        let migratedXP = ExperienceCurve.totalXPRequired(toReach: SkillProgress.loadHeroLevel())
+        saveTotalXP(migratedXP)
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        return migratedXP
+    }
+
+    static func saveTotalXP(_ totalXP: Int) {
+        UserDefaults.standard.set(max(0, totalXP), forKey: totalXPKey)
+    }
+}
+
+private enum ExperienceCurve {
+    private static let nextLevelRequirements = [
+        120,
+        260,
+        450,
+        700,
+        1_000,
+        1_360,
+        1_780,
+        2_260,
+        2_800,
+        3_400,
+        4_060,
+        4_780
+    ]
+
+    static func state(for totalXP: Int) -> LevelState {
+        var remainingXP = max(0, totalXP)
+        var level = 0
+        var nextRequirement = requirementForNextLevel(from: level)
+
+        while remainingXP >= nextRequirement {
+            remainingXP -= nextRequirement
+            level += 1
+            nextRequirement = requirementForNextLevel(from: level)
+        }
+
+        let progress = CGFloat(remainingXP) / CGFloat(max(1, nextRequirement))
+        return LevelState(
+            level: level,
+            progress: min(max(progress, 0), 1),
+            currentXP: remainingXP,
+            requiredXP: nextRequirement
+        )
+    }
+
+    static func totalXPRequired(toReach level: Int) -> Int {
+        guard level > 0 else {
+            return 0
+        }
+
+        return (0..<level).reduce(0) { total, currentLevel in
+            total + requirementForNextLevel(from: currentLevel)
+        }
+    }
+
+    private static func requirementForNextLevel(from level: Int) -> Int {
+        if level < nextLevelRequirements.count {
+            return nextLevelRequirements[level]
+        }
+
+        let extraLevel = level - nextLevelRequirements.count + 1
+        return (nextLevelRequirements.last ?? 4_780) + extraLevel * 820
+    }
+}
+
+enum ScreenPinning {
+    private static let defaultsKey = "NotchHero.pinnedDisplayID"
+
+    static func load() -> Int? {
+        let value = UserDefaults.standard.integer(forKey: defaultsKey)
+        return value == 0 ? nil : value
+    }
+
+    static func save(_ displayID: Int?) {
+        if let displayID {
+            UserDefaults.standard.set(displayID, forKey: defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
+    }
+
+    static func preferredScreen() -> NSScreen? {
+        if let displayID = load(),
+           let screen = NSScreen.screens.first(where: { $0.notchDisplayID == displayID }) {
+            return screen
+        }
+        return NSScreen.main ?? NSScreen.screens.first
+    }
+}
+
+extension NSScreen {
+    var notchDisplayID: Int? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue
+    }
+
+    var notchDisplayName: String {
+        let size = frame.size
+        return "\(localizedName) (\(Int(size.width)) x \(Int(size.height)))"
+    }
+}
+
+enum HeroRole: String, CaseIterable {
+    case pm
+    case designer
+    case artist
+    case engineer
+    case qa
+    case other
+
+    private static let defaultsKey = "NotchHero.selectedRole"
+
+    var label: String {
+        switch self {
+        case .pm: L10n.text(.rolePMLabel)
+        case .designer: L10n.text(.roleDesignerLabel)
+        case .artist: L10n.text(.roleArtistLabel)
+        case .engineer: L10n.text(.roleEngineerLabel)
+        case .qa: L10n.text(.roleQALabel)
+        case .other: L10n.text(.roleOtherLabel)
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .pm: L10n.text(.rolePMDetail)
+        case .designer: L10n.text(.roleDesignerDetail)
+        case .artist: L10n.text(.roleArtistDetail)
+        case .engineer: L10n.text(.roleEngineerDetail)
+        case .qa: L10n.text(.roleQADetail)
+        case .other: L10n.text(.roleOtherDetail)
+        }
+    }
+
+    var perk: String {
+        switch self {
+        case .pm: L10n.text(.rolePMPerk)
+        case .designer: L10n.text(.roleDesignerPerk)
+        case .artist: L10n.text(.roleArtistPerk)
+        case .engineer: L10n.text(.roleEngineerPerk)
+        case .qa: L10n.text(.roleQAPerk)
+        case .other: L10n.text(.roleOtherPerk)
+        }
+    }
+
+    var damageMultiplier: CGFloat {
+        switch self {
+        case .engineer: 1.15
+        case .pm: 1.04
+        default: 1.0
+        }
+    }
+
+    var idleDamageMultiplier: CGFloat {
+        switch self {
+        case .qa: 0.75
+        case .artist: 0.82
+        case .pm: 0.92
+        default: 1.0
+        }
+    }
+
+    static func load() -> HeroRole {
+        guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+              let role = HeroRole(rawValue: rawValue) else {
+            return .other
+        }
+        return role
+    }
+
+    func save() {
+        UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
     }
 }

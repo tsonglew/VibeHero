@@ -4,6 +4,8 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchWindow: NotchWindow?
     private var statusItem: NSStatusItem?
+    private var showMenuItem: NSMenuItem?
+    private var quitMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -16,6 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .notchHeroLanguageChanged,
+            object: nil
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -24,22 +32,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Notch Hero")
+        item.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Vibe Hero")
         item.button?.imagePosition = .imageOnly
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Notch", action: #selector(showNotchFromMenu), keyEquivalent: "s"))
+        let showItem = NSMenuItem(title: L10n.text(.showNotch), action: #selector(showNotchFromMenu), keyEquivalent: "s")
+        let quitItem = NSMenuItem(title: L10n.text(.quitNotchHero), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(showItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Notch Hero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(quitItem)
         item.menu = menu
 
+        showMenuItem = showItem
+        quitMenuItem = quitItem
         statusItem = item
     }
 
     private func showNotchWindow() {
         let window = notchWindow ?? NotchWindow()
         notchWindow = window
-        window.anchorToActiveScreen()
+        window.anchorToPreferredScreen()
         window.orderFrontRegardless()
     }
 
@@ -48,6 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func screenParametersChanged() {
-        notchWindow?.anchorToActiveScreen()
+        notchWindow?.anchorToPreferredScreen()
+    }
+
+    @objc private func languageChanged() {
+        showMenuItem?.title = L10n.text(.showNotch)
+        quitMenuItem?.title = L10n.text(.quitNotchHero)
     }
 }
