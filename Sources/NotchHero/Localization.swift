@@ -169,6 +169,38 @@ enum L10nKey: String, CaseIterable {
     case monsterCacheGolemShort
     case monsterTokenSlimeShort
     case monsterNullSentinelShort
+
+    case lootEquipment
+    case rarityCommon
+    case rarityUncommon
+    case rarityRare
+    case rarityEpic
+    case rarityLegendary
+    case slotWeapon
+    case slotArmor
+    case slotCharm
+    case equipmentName
+    case equipmentBonusWeapon
+    case equipmentBonusArmor
+    case equipmentBonusCharm
+    case lootEquipmentSummary
+    case equipmentEquipped
+    case equipmentSalvaged
+    case equipmentSectionTitle
+    case stageTag
+    case stageTagBoss
+    case stageReached
+    case bossAppears
+    case bossMonsterName
+    case comboText
+    case critLabel
+    case levelUpBanner
+
+    case backdrop
+    case backdropMidnightForest
+    case backdropCrystalCave
+    case backdropSunsetDunes
+    case backdropNeonCity
 }
 
 enum L10n {
@@ -309,7 +341,39 @@ enum L10n {
             .monsterPromptWraithShort: "Wraith",
             .monsterCacheGolemShort: "Golem",
             .monsterTokenSlimeShort: "Slime",
-            .monsterNullSentinelShort: "Sentinel"
+            .monsterNullSentinelShort: "Sentinel",
+
+            .lootEquipment: "Equipment",
+            .rarityCommon: "Common",
+            .rarityUncommon: "Uncommon",
+            .rarityRare: "Rare",
+            .rarityEpic: "Epic",
+            .rarityLegendary: "Legendary",
+            .slotWeapon: "Weapon",
+            .slotArmor: "Armor",
+            .slotCharm: "Charm",
+            .equipmentName: "%1$@ %2$@",
+            .equipmentBonusWeapon: "ATK +%d%%",
+            .equipmentBonusArmor: "DEF +%d%%",
+            .equipmentBonusCharm: "CHG +%d%%",
+            .lootEquipmentSummary: "%1$@ %2$@",
+            .equipmentEquipped: "Equipped %@",
+            .equipmentSalvaged: "%@ salvaged · +%d G",
+            .equipmentSectionTitle: "Equipment",
+            .stageTag: "STAGE %d",
+            .stageTagBoss: "STAGE %d · BOSS",
+            .stageReached: "Stage %d reached",
+            .bossAppears: "BOSS %@ appears!",
+            .bossMonsterName: "BOSS %@",
+            .comboText: "COMBO x%d",
+            .critLabel: "CRIT",
+            .levelUpBanner: "LEVEL UP!",
+
+            .backdrop: "Scene",
+            .backdropMidnightForest: "Midnight Forest",
+            .backdropCrystalCave: "Crystal Cave",
+            .backdropSunsetDunes: "Sunset Dunes",
+            .backdropNeonCity: "Neon City"
         ],
         .simplifiedChinese: [
             .showNotch: "显示刘海",
@@ -438,7 +502,39 @@ enum L10n {
             .monsterPromptWraithShort: "幽影",
             .monsterCacheGolemShort: "魔像",
             .monsterTokenSlimeShort: "史莱姆",
-            .monsterNullSentinelShort: "哨兵"
+            .monsterNullSentinelShort: "哨兵",
+
+            .lootEquipment: "装备",
+            .rarityCommon: "普通",
+            .rarityUncommon: "优秀",
+            .rarityRare: "稀有",
+            .rarityEpic: "史诗",
+            .rarityLegendary: "传说",
+            .slotWeapon: "武器",
+            .slotArmor: "护甲",
+            .slotCharm: "护符",
+            .equipmentName: "%1$@%2$@",
+            .equipmentBonusWeapon: "攻击 +%d%%",
+            .equipmentBonusArmor: "防御 +%d%%",
+            .equipmentBonusCharm: "充能 +%d%%",
+            .lootEquipmentSummary: "%1$@ %2$@",
+            .equipmentEquipped: "已装备 %@",
+            .equipmentSalvaged: "%@ 已折算 · +%d 金币",
+            .equipmentSectionTitle: "装备",
+            .stageTag: "第 %d 关",
+            .stageTagBoss: "第 %d 关 · BOSS",
+            .stageReached: "进入第 %d 关",
+            .bossAppears: "BOSS %@ 现身！",
+            .bossMonsterName: "BOSS %@",
+            .comboText: "连击 x%d",
+            .critLabel: "暴击",
+            .levelUpBanner: "升级！",
+
+            .backdrop: "背景场景",
+            .backdropMidnightForest: "午夜森林",
+            .backdropCrystalCave: "水晶洞窟",
+            .backdropSunsetDunes: "落日沙丘",
+            .backdropNeonCity: "霓虹都市"
         ],
         .japanese: [
             .showNotch: "ノッチを表示",
@@ -567,7 +663,39 @@ enum L10n {
             .monsterPromptWraithShort: "レイス",
             .monsterCacheGolemShort: "ゴーレム",
             .monsterTokenSlimeShort: "スライム",
-            .monsterNullSentinelShort: "センチネル"
+            .monsterNullSentinelShort: "センチネル",
+
+            .lootEquipment: "装備",
+            .rarityCommon: "コモン",
+            .rarityUncommon: "アンコモン",
+            .rarityRare: "レア",
+            .rarityEpic: "エピック",
+            .rarityLegendary: "レジェンダリー",
+            .slotWeapon: "武器",
+            .slotArmor: "鎧",
+            .slotCharm: "お守り",
+            .equipmentName: "%1$@の%2$@",
+            .equipmentBonusWeapon: "攻撃 +%d%%",
+            .equipmentBonusArmor: "防御 +%d%%",
+            .equipmentBonusCharm: "チャージ +%d%%",
+            .lootEquipmentSummary: "%1$@ %2$@",
+            .equipmentEquipped: "%@ を装備",
+            .equipmentSalvaged: "%@ を換金 · +%d G",
+            .equipmentSectionTitle: "装備",
+            .stageTag: "ステージ %d",
+            .stageTagBoss: "ステージ %d · BOSS",
+            .stageReached: "ステージ %d に到達",
+            .bossAppears: "BOSS %@ 出現！",
+            .bossMonsterName: "BOSS %@",
+            .comboText: "コンボ x%d",
+            .critLabel: "会心",
+            .levelUpBanner: "レベルアップ！",
+
+            .backdrop: "背景シーン",
+            .backdropMidnightForest: "深夜の森",
+            .backdropCrystalCave: "クリスタル洞窟",
+            .backdropSunsetDunes: "夕陽の砂丘",
+            .backdropNeonCity: "ネオンシティ"
         ]
     ]
 }

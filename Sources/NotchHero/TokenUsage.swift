@@ -24,12 +24,45 @@ enum TokenUsageScanner {
     private static let calendar = Calendar.current
     fileprivate static let recentWindow: TimeInterval = 10 * 60
 
+    // Incremental scan state. Files are append-only JSONL logs, so after the first
+    // full read we only tail bytes appended since the previous scan and keep the
+    // day's parsed events in memory. All access is serialized by the lock.
+    private final class ScanState: @unchecked Sendable {
+        let lock = NSLock()
+        var scanDay: Date?
+        var todayEvents: [TokenUsageEvent] = []
+        var fileCursors: [String: UInt64] = [:]
+
+        // Formatter creation goes through ICU and is expensive; reuse shared
+        // instances. Safe because all use happens under the lock.
+        let fractionalISO8601Formatter: ISO8601DateFormatter = {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return formatter
+        }()
+
+        let plainISO8601Formatter: ISO8601DateFormatter = {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter
+        }()
+    }
+
+    private static let state = ScanState()
+
     static func scanToday(now: Date = Date()) -> TokenUsageSnapshot {
+        state.lock.lock()
+        defer { state.lock.unlock() }
+
         let startOfDay = calendar.startOfDay(for: now)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? now
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        if state.scanDay != startOfDay {
+            state.scanDay = startOfDay
+            state.todayEvents = []
+            state.fileCursors = [:]
+        }
 
-        var accumulator = TokenUsageAccumulator(generatedAt: now)
+        let home = FileManager.default.homeDirectoryForCurrentUser
         let claudeRoot = home.appendingPathComponent(".claude/projects")
         let codexRoot = home.appendingPathComponent(".codex/sessions")
         let codexArchiveRoot = home.appendingPathComponent(".codex/archived_sessions")
@@ -38,24 +71,31 @@ enum TokenUsageScanner {
             .appendingPathComponent("token-events.jsonl")
 
         for file in jsonlFiles(modifiedSince: startOfDay, under: claudeRoot) {
-            scanFile(file, source: "Claude", startOfDay: startOfDay, endOfDay: endOfDay, now: now, accumulator: &accumulator)
+            ingestFile(file, source: "Claude", isHook: false, startOfDay: startOfDay, endOfDay: endOfDay)
         }
 
         for file in codexFiles(for: now, sessionsRoot: codexRoot, archiveRoot: codexArchiveRoot, startOfDay: startOfDay) {
-            scanFile(file, source: "Codex", startOfDay: startOfDay, endOfDay: endOfDay, now: now, accumulator: &accumulator)
+            ingestFile(file, source: "Codex", isHook: false, startOfDay: startOfDay, endOfDay: endOfDay)
         }
 
-        let coveredSources = Set(accumulator.sourceBreakdown.keys)
-        scanFile(
-            hookLog,
-            source: "Hook",
-            startOfDay: startOfDay,
-            endOfDay: endOfDay,
-            now: now,
-            skippedSources: coveredSources,
-            accumulator: &accumulator
-        )
+        ingestFile(hookLog, source: "Hook", isHook: true, startOfDay: startOfDay, endOfDay: endOfDay)
 
+        // Primary Claude/Codex logs win over the hook fallback: hook events whose
+        // source already has real primary-log events today are skipped, matching
+        // the previous full-rescan behavior (including its self-correction when a
+        // lagging primary log catches up).
+        var coveredSources = Set<String>()
+        for event in state.todayEvents where !event.isHook && event.usage.total > 0 {
+            coveredSources.insert(event.source)
+        }
+
+        var accumulator = TokenUsageAccumulator(generatedAt: now)
+        for event in state.todayEvents {
+            if event.isHook, coveredSources.contains(event.source) {
+                continue
+            }
+            accumulator.add(event, now: now)
+        }
         return accumulator.snapshot
     }
 
@@ -109,20 +149,58 @@ enum TokenUsageScanner {
         return result
     }
 
-    private static func scanFile(
+    private static func ingestFile(
         _ file: URL,
         source: String,
+        isHook: Bool,
         startOfDay: Date,
-        endOfDay: Date,
-        now: Date,
-        skippedSources: Set<String> = [],
-        accumulator: inout TokenUsageAccumulator
+        endOfDay: Date
     ) {
-        guard let content = try? String(contentsOf: file, encoding: .utf8) else {
+        let path = file.path
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return
+        }
+        defer { try? handle.close() }
+
+        guard let size = try? handle.seekToEnd() else {
             return
         }
 
-        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: true) {
+        var offset = state.fileCursors[path] ?? 0
+        if offset > size {
+            // Truncated or rotated: drop previously ingested lines from this file
+            // and re-read it from the start.
+            offset = 0
+            state.todayEvents.removeAll { $0.path == path }
+        }
+
+        do {
+            try handle.seek(toOffset: offset)
+        } catch {
+            return
+        }
+
+        guard let data = try? handle.readToEnd(), !data.isEmpty else {
+            state.fileCursors[path] = offset
+            return
+        }
+
+        // Consume only up to the last complete line; a writer may be mid-line.
+        var consumed = data.count
+        if data.last != 0x0A {
+            guard let lastNewline = data.lastIndex(of: 0x0A) else {
+                state.fileCursors[path] = offset
+                return
+            }
+            consumed = data.index(after: lastNewline)
+        }
+        state.fileCursors[path] = offset + UInt64(consumed)
+
+        guard let text = String(data: data.prefix(consumed), encoding: .utf8) else {
+            return
+        }
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = String(rawLine)
             guard line.contains("\"usage\"") ||
                     line.contains("\"token_count\"") ||
@@ -132,17 +210,15 @@ enum TokenUsageScanner {
                 continue
             }
 
-            guard let event = parseLine(line, fallbackSource: source),
+            guard var event = parseLine(line, fallbackSource: source),
                   event.timestamp >= startOfDay,
                   event.timestamp < endOfDay else {
                 continue
             }
 
-            if skippedSources.contains(event.source) {
-                continue
-            }
-
-            accumulator.add(event, now: now)
+            event.isHook = isHook
+            event.path = path
+            state.todayEvents.append(event)
         }
     }
 
@@ -287,15 +363,11 @@ enum TokenUsageScanner {
             return nil
         }
 
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: raw) {
+        if let date = state.fractionalISO8601Formatter.date(from: raw) {
             return date
         }
 
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: raw)
+        return state.plainISO8601Formatter.date(from: raw)
     }
 }
 
@@ -303,6 +375,8 @@ private struct TokenUsageEvent {
     let timestamp: Date
     let source: String
     let usage: TokenUsage
+    var isHook = false
+    var path = ""
 }
 
 private struct TokenUsage {

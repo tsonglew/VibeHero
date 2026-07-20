@@ -4,13 +4,21 @@ A tiny native macOS notch app prototype. It creates a transparent, always-on-top
 
 ## Screenshots
 
+### Expanded Notch HUD
+
 <p align="center">
   <img src="docs/images/battle.png" alt="Expanded battle HUD" width="720">
 </p>
 
+### Collapsed Notch HUD
+
 <p align="center">
   <img src="docs/images/collapsed.png" alt="Collapsed notch pill" width="400">
-  &nbsp;&nbsp;
+</p>
+
+### Settings Window
+
+<p align="center">
   <img src="docs/images/settings.png" alt="Settings window" width="360">
 </p>
 
@@ -86,8 +94,13 @@ The installed app will be:
 - Native AppKit app entry point
 - Transparent, borderless top-center notch panel with proportions matched to the current screen's top bar
 - Collapsed view with hero level, current token total, HP, and XP progress
-- Expanded battle view with hero, monster, damage ticks, monster HP, token rate, and combat status
-- Role, language, display, and skill settings from the expanded HUD gear button, persisted with `UserDefaults`
+- Expanded battle view with hero, monster, floating combat text, monster HP bar, token rate, and combat status
+- Stage progression with crowned boss stages every 5th stage, plus combo and critical-hit systems
+- Token bursts split into staggered strikes with token-scaled damage numbers, plus attack-intensity tiers that scale effects with your token rate
+- Rarity-tiered equipment drops (Weapon / Armor / Charm) with auto-equip, gold salvage, and a Settings equipment section
+- Ghost-trail HP bars, low-HP pulse warning, level-up bursts, and boss spawn effects
+- Selectable battle backdrops (Midnight Forest, Crystal Cave, Sunset Dunes, Neon City) with endless parallax scrolling as the hero walks forward
+- Role, language, display, scene, equipment, and skill settings from the expanded HUD gear button, persisted with `UserDefaults`
 - Hover to expand into battle, then auto-collapse shortly after the pointer leaves
 - Reads real local token usage from Claude Code and Codex JSONL logs when available
 - Monster counterattacks when no new token usage is detected for too long
@@ -98,7 +111,7 @@ The installed app will be:
 
 ## Token Usage
 
-Vibe Hero scans local JSONL logs every few seconds and only extracts timestamps plus token counters.
+Vibe Hero scans local JSONL logs every few seconds and only extracts timestamps plus token counters. After the first full read it tails only newly appended lines, so idle CPU usage stays near zero.
 
 Current sources:
 

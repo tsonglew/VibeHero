@@ -70,6 +70,9 @@ final class NotchWindow: NSPanel {
             self?.notchView.reloadPreferences()
             self?.settingsWindow?.refresh()
         }
+        window.onBackdropChanged = { [weak self] in
+            self?.notchView.reloadPreferences()
+        }
         window.refresh()
         window.centerNear(rect: frame)
         window.makeKeyAndOrderFront(nil)

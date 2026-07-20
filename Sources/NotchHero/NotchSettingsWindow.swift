@@ -18,6 +18,11 @@ final class NotchSettingsWindow: NSWindow {
         set { settingsView.onSkillChanged = newValue }
     }
 
+    var onBackdropChanged: (() -> Void)? {
+        get { settingsView.onBackdropChanged }
+        set { settingsView.onBackdropChanged = newValue }
+    }
+
     var onLanguageChanged: (() -> Void)? {
         get { settingsView.onLanguageChanged }
         set { settingsView.onLanguageChanged = newValue }
@@ -68,6 +73,7 @@ private final class NotchSettingsView: NSView {
     var onDisplayChanged: (() -> Void)?
     var onSkillChanged: (() -> Void)?
     var onLanguageChanged: (() -> Void)?
+    var onBackdropChanged: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let languageLabel = NSTextField(labelWithString: "")
@@ -79,16 +85,22 @@ private final class NotchSettingsView: NSView {
     private let displayLabel = NSTextField(labelWithString: "")
     private let displayPopup = NSPopUpButton()
     private let displayDetailLabel = NSTextField(labelWithString: "")
+    private let backdropLabel = NSTextField(labelWithString: "")
+    private let backdropRowStack = NSStackView()
     private let skillsLabel = NSTextField(labelWithString: "")
     private let skillPointsLabel = NSTextField(labelWithString: "")
     private let skillStack = NSStackView()
     private let hooksLabel = NSTextField(labelWithString: "")
     private let hooksDetailLabel = NSTextField(labelWithString: "")
     private let hooksStack = NSStackView()
+    private let equipmentLabel = NSTextField(labelWithString: "")
+    private let equipmentStack = NSStackView()
     private let scrollView = NSScrollView()
     private var roleChoiceViews: [RoleChoiceView] = []
     private var skillRows: [SkillRowView] = []
     private var hookRows: [TokenHookRowView] = []
+    private var equipmentRows: [EquipmentRowView] = []
+    private var backdropChoiceViews: [BackdropChoiceView] = []
     private var displayIDs: [Int?] = []
 
     override init(frame frameRect: NSRect) {
@@ -107,6 +119,8 @@ private final class NotchSettingsView: NSView {
         refreshSkillOptions()
         refreshLanguageOptions()
         applyLocalizedText()
+        equipmentRows.forEach { $0.refresh() }
+        backdropChoiceViews.forEach { $0.refreshSelection() }
     }
 
     private func setup() {
@@ -119,6 +133,8 @@ private final class NotchSettingsView: NSView {
         displayLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         skillsLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         hooksLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        equipmentLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        backdropLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
         [roleDetailLabel, rolePerkLabel, displayDetailLabel, skillPointsLabel, hooksDetailLabel].forEach {
             $0.font = NSFont.systemFont(ofSize: 12, weight: .regular)
@@ -171,6 +187,23 @@ private final class NotchSettingsView: NSView {
         displayPopup.translatesAutoresizingMaskIntoConstraints = false
         displayPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
 
+        backdropChoiceViews = BattleBackdrop.allCases.map { backdrop in
+            let choiceView = BackdropChoiceView(backdrop: backdrop)
+            choiceView.onSelected = { [weak self] selectedBackdrop in
+                self?.selectBackdrop(selectedBackdrop)
+            }
+            return choiceView
+        }
+        backdropRowStack.orientation = .horizontal
+        backdropRowStack.alignment = .top
+        backdropRowStack.spacing = 8
+        backdropChoiceViews.forEach { backdropRowStack.addArrangedSubview($0) }
+
+        let backdropStack = NSStackView(views: [backdropLabel, backdropRowStack])
+        backdropStack.orientation = .vertical
+        backdropStack.alignment = .leading
+        backdropStack.spacing = 8
+
         skillStack.orientation = .vertical
         skillStack.alignment = .leading
         skillStack.spacing = 10
@@ -192,6 +225,20 @@ private final class NotchSettingsView: NSView {
         skillsStack.orientation = .vertical
         skillsStack.alignment = .leading
         skillsStack.spacing = 8
+
+        equipmentStack.orientation = .vertical
+        equipmentStack.alignment = .leading
+        equipmentStack.spacing = 8
+        equipmentRows = EquipmentSlot.allCases.map { slot in
+            let row = EquipmentRowView(slot: slot)
+            equipmentStack.addArrangedSubview(row)
+            return row
+        }
+
+        let equipmentSectionStack = NSStackView(views: [equipmentLabel, equipmentStack])
+        equipmentSectionStack.orientation = .vertical
+        equipmentSectionStack.alignment = .leading
+        equipmentSectionStack.spacing = 8
 
         hooksStack.orientation = .vertical
         hooksStack.alignment = .leading
@@ -219,9 +266,13 @@ private final class NotchSettingsView: NSView {
             makeSeparator(),
             displayStack,
             makeSeparator(),
+            backdropStack,
+            makeSeparator(),
             hookSettingsStack,
             makeSeparator(),
-            skillsStack
+            skillsStack,
+            makeSeparator(),
+            equipmentSectionStack
         ])
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -257,7 +308,8 @@ private final class NotchSettingsView: NSView {
             hooksDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             hooksStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             skillPointsLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            skillStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+            skillStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            equipmentStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
         ])
     }
 
@@ -305,6 +357,8 @@ private final class NotchSettingsView: NSView {
         skillsLabel.stringValue = L10n.text(.skills)
         hooksLabel.stringValue = L10n.text(.tokenHooks)
         hooksDetailLabel.stringValue = L10n.text(.tokenHooksDetail)
+        equipmentLabel.stringValue = L10n.text(.equipmentSectionTitle)
+        backdropLabel.stringValue = L10n.text(.backdrop)
         hookRows.forEach { $0.refresh() }
     }
 
@@ -362,6 +416,12 @@ private final class NotchSettingsView: NSView {
         roleChoiceViews.forEach { $0.refresh(selectedRole: role) }
         updateRoleDetails(for: role)
         onRoleChanged?()
+    }
+
+    private func selectBackdrop(_ backdrop: BattleBackdrop) {
+        backdrop.save()
+        backdropChoiceViews.forEach { $0.refreshSelection() }
+        onBackdropChanged?()
     }
 
     private func makeSeparator() -> NSBox {
@@ -745,6 +805,84 @@ private final class SkillPreviewView: NSView {
     }
 }
 
+private final class BackdropChoiceView: NSView {
+    let backdrop: BattleBackdrop
+    var onSelected: ((BattleBackdrop) -> Void)?
+
+    private let previewView = BackdropView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let clickButton = NSButton(title: "", target: nil, action: nil)
+
+    init(backdrop: BattleBackdrop) {
+        self.backdrop = backdrop
+        super.init(frame: .zero)
+        setup()
+        previewView.backdrop = backdrop
+        nameLabel.stringValue = backdrop.name
+        refreshSelection()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func refreshSelection() {
+        nameLabel.stringValue = backdrop.name
+        let isSelected = BattleBackdrop.load() == backdrop
+        layer?.borderColor = isSelected
+            ? NSColor.controlAccentColor.cgColor
+            : NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        layer?.borderWidth = isSelected ? 2 : 1
+        layer?.backgroundColor = isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.13).cgColor
+            : NSColor.controlBackgroundColor.withAlphaComponent(0.65).cgColor
+    }
+
+    private func setup() {
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+
+        previewView.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        clickButton.translatesAutoresizingMaskIntoConstraints = false
+
+        nameLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        nameLabel.alignment = .center
+        nameLabel.lineBreakMode = .byTruncatingTail
+
+        clickButton.isBordered = false
+        clickButton.target = self
+        clickButton.action = #selector(selectBackdrop)
+
+        addSubview(previewView)
+        addSubview(nameLabel)
+        addSubview(clickButton)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 104),
+            heightAnchor.constraint(equalToConstant: 72),
+            previewView.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            previewView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            previewView.widthAnchor.constraint(equalToConstant: 90),
+            previewView.heightAnchor.constraint(equalToConstant: 38),
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            nameLabel.topAnchor.constraint(equalTo: previewView.bottomAnchor, constant: 4),
+            nameLabel.heightAnchor.constraint(equalToConstant: 14),
+            clickButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            clickButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            clickButton.topAnchor.constraint(equalTo: topAnchor),
+            clickButton.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    @objc private func selectBackdrop() {
+        onSelected?(backdrop)
+    }
+}
+
 private final class RoleChoiceView: NSView {
     let role: HeroRole
     var onSelected: ((HeroRole) -> Void)?
@@ -833,5 +971,67 @@ private final class RoleChoiceView: NSView {
 
     @objc private func selectRole() {
         onSelected?(role)
+    }
+}
+
+private final class EquipmentRowView: NSView {
+    let slot: EquipmentSlot
+
+    private let slotLabel = NSTextField(labelWithString: "")
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let bonusLabel = NSTextField(labelWithString: "")
+
+    init(slot: EquipmentSlot) {
+        self.slot = slot
+        super.init(frame: .zero)
+        setup()
+        refresh()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func refresh() {
+        slotLabel.stringValue = slot.name
+        if let equipped = ItemSystem.equippedDrop(for: slot) {
+            nameLabel.stringValue = equipped.displayName
+            nameLabel.textColor = equipped.rarity.color
+            bonusLabel.stringValue = slot.bonusText(for: equipped.rarity)
+        } else {
+            nameLabel.stringValue = "—"
+            nameLabel.textColor = .secondaryLabelColor
+            bonusLabel.stringValue = ""
+        }
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.cornerRadius = 8
+        translatesAutoresizingMaskIntoConstraints = false
+
+        slotLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        bonusLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        bonusLabel.textColor = .secondaryLabelColor
+        bonusLabel.alignment = .right
+
+        [slotLabel, nameLabel, bonusLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
+            slotLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            slotLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            slotLabel.widthAnchor.constraint(equalToConstant: 76),
+            nameLabel.leadingAnchor.constraint(equalTo: slotLabel.trailingAnchor, constant: 10),
+            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            bonusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 10),
+            bonusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            bonusLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
     }
 }
