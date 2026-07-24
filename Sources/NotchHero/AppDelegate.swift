@@ -51,8 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showNotchWindow() {
         let window = notchWindow ?? NotchWindow()
         notchWindow = window
-        window.anchorToPreferredScreen()
-        window.orderFrontRegardless()
+        window.show()
     }
 
     @objc private func showNotchFromMenu() {

@@ -2,9 +2,11 @@ import AppKit
 
 final class NotchWindow: NSPanel {
     private let notchView: NotchContentView
+    private let fullScreenMonitor = FullScreenMonitor()
     private var settingsWindow: NotchSettingsWindow?
     private var collapseWorkItem: DispatchWorkItem?
     private var isExpanded = false
+    private var hiddenForFullScreen = false
 
     init() {
         let initialScreen = ScreenPinning.preferredScreen()
@@ -43,6 +45,41 @@ final class NotchWindow: NSPanel {
             self?.showSettings()
         }
         contentView = notchView
+
+        fullScreenMonitor.onChange = { [weak self] _ in
+            self?.applyFullScreenVisibility()
+        }
+        fullScreenMonitor.start()
+    }
+
+    // Single entry point for showing the window: re-anchors, then honors the
+    // full-screen hide preference instead of always ordering front.
+    func show() {
+        anchorToPreferredScreen()
+        refreshFullScreenVisibility()
+        if !hiddenForFullScreen {
+            orderFrontRegardless()
+        }
+    }
+
+    func refreshFullScreenVisibility() {
+        fullScreenMonitor.refresh()
+        applyFullScreenVisibility()
+    }
+
+    private func applyFullScreenVisibility() {
+        let shouldHide = FullScreenHidePreference.load() && fullScreenMonitor.isFullScreenActive
+        guard shouldHide != hiddenForFullScreen else {
+            return
+        }
+
+        hiddenForFullScreen = shouldHide
+        if shouldHide {
+            collapseWorkItem?.cancel()
+            orderOut(nil)
+        } else {
+            orderFrontRegardless()
+        }
     }
 
     func anchorToPreferredScreen() {
@@ -52,6 +89,10 @@ final class NotchWindow: NSPanel {
 
         let targetSize = isExpanded ? styles.expanded.windowSize : styles.collapsed.windowSize
         setFrame(frameForPreferredScreen(size: targetSize), display: true)
+
+        // Coverage depends on which screen we are pinned to.
+        fullScreenMonitor.refresh()
+        applyFullScreenVisibility()
     }
 
     private func showSettings() {
@@ -72,6 +113,9 @@ final class NotchWindow: NSPanel {
         }
         window.onBackdropChanged = { [weak self] in
             self?.notchView.reloadPreferences()
+        }
+        window.onFullScreenHideChanged = { [weak self] in
+            self?.refreshFullScreenVisibility()
         }
         window.refresh()
         window.centerNear(rect: frame)

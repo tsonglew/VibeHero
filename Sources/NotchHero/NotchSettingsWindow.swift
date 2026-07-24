@@ -23,6 +23,11 @@ final class NotchSettingsWindow: NSWindow {
         set { settingsView.onBackdropChanged = newValue }
     }
 
+    var onFullScreenHideChanged: (() -> Void)? {
+        get { settingsView.onFullScreenHideChanged }
+        set { settingsView.onFullScreenHideChanged = newValue }
+    }
+
     var onLanguageChanged: (() -> Void)? {
         get { settingsView.onLanguageChanged }
         set { settingsView.onLanguageChanged = newValue }
@@ -74,6 +79,7 @@ private final class NotchSettingsView: NSView {
     var onSkillChanged: (() -> Void)?
     var onLanguageChanged: (() -> Void)?
     var onBackdropChanged: (() -> Void)?
+    var onFullScreenHideChanged: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let languageLabel = NSTextField(labelWithString: "")
@@ -85,6 +91,9 @@ private final class NotchSettingsView: NSView {
     private let displayLabel = NSTextField(labelWithString: "")
     private let displayPopup = NSPopUpButton()
     private let displayDetailLabel = NSTextField(labelWithString: "")
+    private let fullScreenLabel = NSTextField(labelWithString: "")
+    private let fullScreenToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let fullScreenDetailLabel = NSTextField(labelWithString: "")
     private let backdropLabel = NSTextField(labelWithString: "")
     private let backdropRowStack = NSStackView()
     private let skillsLabel = NSTextField(labelWithString: "")
@@ -118,6 +127,7 @@ private final class NotchSettingsView: NSView {
         refreshDisplayOptions()
         refreshSkillOptions()
         refreshLanguageOptions()
+        refreshFullScreenOption()
         applyLocalizedText()
         equipmentRows.forEach { $0.refresh() }
         backdropChoiceViews.forEach { $0.refreshSelection() }
@@ -131,12 +141,13 @@ private final class NotchSettingsView: NSView {
         languageLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         roleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         displayLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        fullScreenLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         skillsLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         hooksLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         equipmentLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         backdropLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
-        [roleDetailLabel, rolePerkLabel, displayDetailLabel, skillPointsLabel, hooksDetailLabel].forEach {
+        [roleDetailLabel, rolePerkLabel, displayDetailLabel, fullScreenDetailLabel, skillPointsLabel, hooksDetailLabel].forEach {
             $0.font = NSFont.systemFont(ofSize: 12, weight: .regular)
             $0.textColor = .secondaryLabelColor
             $0.lineBreakMode = .byWordWrapping
@@ -147,6 +158,8 @@ private final class NotchSettingsView: NSView {
         languagePopup.action = #selector(languageChanged)
         displayPopup.target = self
         displayPopup.action = #selector(displayChanged)
+        fullScreenToggle.target = self
+        fullScreenToggle.action = #selector(fullScreenHideChanged)
 
         let languageStack = NSStackView(views: [languageLabel, languagePopup])
         languageStack.orientation = .vertical
@@ -186,6 +199,11 @@ private final class NotchSettingsView: NSView {
         displayStack.spacing = 8
         displayPopup.translatesAutoresizingMaskIntoConstraints = false
         displayPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+
+        let fullScreenStack = NSStackView(views: [fullScreenLabel, fullScreenToggle, fullScreenDetailLabel])
+        fullScreenStack.orientation = .vertical
+        fullScreenStack.alignment = .leading
+        fullScreenStack.spacing = 8
 
         backdropChoiceViews = BattleBackdrop.allCases.map { backdrop in
             let choiceView = BackdropChoiceView(backdrop: backdrop)
@@ -266,6 +284,8 @@ private final class NotchSettingsView: NSView {
             makeSeparator(),
             displayStack,
             makeSeparator(),
+            fullScreenStack,
+            makeSeparator(),
             backdropStack,
             makeSeparator(),
             hookSettingsStack,
@@ -305,6 +325,7 @@ private final class NotchSettingsView: NSView {
             rolePerkLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             roleGridStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             displayDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            fullScreenDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             hooksDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             hooksStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             skillPointsLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -354,6 +375,9 @@ private final class NotchSettingsView: NSView {
         languageLabel.stringValue = L10n.text(.language)
         roleLabel.stringValue = L10n.text(.heroRole)
         displayLabel.stringValue = L10n.text(.display)
+        fullScreenLabel.stringValue = L10n.text(.fullScreen)
+        fullScreenToggle.title = L10n.text(.hideInFullScreen)
+        fullScreenDetailLabel.stringValue = L10n.text(.hideInFullScreenDetail)
         skillsLabel.stringValue = L10n.text(.skills)
         hooksLabel.stringValue = L10n.text(.tokenHooks)
         hooksDetailLabel.stringValue = L10n.text(.tokenHooksDetail)
@@ -379,6 +403,15 @@ private final class NotchSettingsView: NSView {
         ScreenPinning.save(selectedDisplayID)
         refreshDisplayOptions()
         onDisplayChanged?()
+    }
+
+    private func refreshFullScreenOption() {
+        fullScreenToggle.state = FullScreenHidePreference.load() ? .on : .off
+    }
+
+    @objc private func fullScreenHideChanged() {
+        FullScreenHidePreference.save(fullScreenToggle.state == .on)
+        onFullScreenHideChanged?()
     }
 
     private func refreshSkillOptions() {

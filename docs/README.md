@@ -33,7 +33,7 @@ shortly after the pointer leaves.
 ### Settings
 
 Click the gear button in the expanded HUD to open settings: role, language, display
-(screen pinning), the skill tree, and Token Hooks.
+(screen pinning), full-screen visibility, the skill tree, and Token Hooks.
 
 <p align="center">
   <img src="images/settings.png" alt="Vibe Hero settings window with role, language, display, skills and token hooks" width="560">
@@ -231,6 +231,8 @@ Open from the gear button in the expanded HUD.
 - **Language** — English, 简体中文, 日本語 (English is the fallback).
 - **Display** — pin the notch to a specific screen (useful for multi-display setups); defaults
   to the main screen.
+- **Full Screen** — `Hide in full screen` hides the notch while an app covers the whole
+  pinned screen; off by default. Works on displays with and without a notch.
 - **Scene** — pick the battle backdrop: Midnight Forest, Crystal Cave, Sunset Dunes, or
   Neon City.
 - **Skill tree** — spend points, rank up skills, toggle auto-cast.
@@ -301,14 +303,15 @@ Pure Swift + AppKit, no third-party dependencies, built with the Swift Package M
 |---------------------------|----------------------------------------------------------------------|
 | `main.swift`              | AppKit entry point.                                                  |
 | `AppDelegate.swift`       | Accessory-app lifecycle, menu bar item, screen/language observers.  |
-| `NotchWindow.swift`       | Transparent, borderless, always-on-top panel anchored to the notch. |
+| `NotchWindow.swift`       | Transparent, borderless, always-on-top panel anchored to the notch; hides on full screen when enabled. |
+| `FullScreenMonitor.swift` | Detects apps covering the whole pinned screen; drives the hide-in-full-screen option. |
 | `NotchContentView.swift`  | Collapsed + expanded HUD, combat loop, stages, combo, crits, XP/level, roles, pinning. |
 | `GameViews.swift`         | Pixel actors (incl. boss variants), battle scene and selectable backdrops, floating combat text, ghost HP bars, effects. |
 | `SkillSystem.swift`       | Skill definitions, tree tiers, prerequisites, energy/cooldowns.     |
 | `ItemSystem.swift`        | Loot table, equipment slots and rarities, gold, Power Boost buff.   |
 | `TokenUsage.swift`        | Incrementally tails local JSONL logs into a token snapshot.          |
 | `TokenHookInstaller.swift`| Installs/removes token event hooks for Claude/Codex/OpenCode.        |
-| `NotchSettingsWindow.swift`| Role, language, display, skill tree, equipment, Token Hooks UI.     |
+| `NotchSettingsWindow.swift`| Role, language, display, full-screen hide, skill tree, equipment, Token Hooks UI. |
 | `Localization.swift`      | i18n layer (English / 简体中文 / 日本語).                            |
 
 ### Project conventions

@@ -100,12 +100,12 @@ The installed app will be:
 - Rarity-tiered equipment drops (Weapon / Armor / Charm) with auto-equip, gold salvage, and a Settings equipment section
 - Ghost-trail HP bars, low-HP pulse warning, level-up bursts, and boss spawn effects
 - Selectable battle backdrops (Midnight Forest, Crystal Cave, Sunset Dunes, Neon City) with endless parallax scrolling as the hero walks forward
-- Role, language, display, scene, equipment, and skill settings from the expanded HUD gear button, persisted with `UserDefaults`
+- Role, language, display, full-screen, scene, equipment, and skill settings from the expanded HUD gear button, persisted with `UserDefaults`
 - Hover to expand into battle, then auto-collapse shortly after the pointer leaves
 - Reads real local token usage from Claude Code and Codex JSONL logs when available
 - Monster counterattacks when no new token usage is detected for too long
 - Rotating monster roster with distinct pixel forms plus death and respawn effects
-- Always-on-top behavior across Spaces and full-screen apps
+- Always-on-top behavior across Spaces and full-screen apps, with an optional Settings toggle to hide the notch while an app is full screen
 - Menu bar controls for show and quit
 - Animated pixel-style game HUD driven by local token usage events
 
@@ -152,6 +152,8 @@ The Settings window also includes a display pinning control:
 
 - `Follow Active Display`: follow the active display
 - Display names such as `Built-in Retina Display`: keep the notch window fixed to that display
+
+The `Full Screen` section offers `Hide in full screen`: automatically hide the notch while an app covers the whole pinned screen. It is off by default and works on displays with and without a notch.
 
 ## Localization
 

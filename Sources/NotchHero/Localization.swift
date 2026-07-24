@@ -62,6 +62,9 @@ enum L10nKey: String, CaseIterable {
     case fixedToDisplay
     case followsActiveDisplay
     case pinnedDisplayMissing
+    case fullScreen
+    case hideInFullScreen
+    case hideInFullScreenDetail
     case skillPointsAvailable
     case oneSkillPointAvailable
     case skillPointShort
@@ -235,6 +238,9 @@ enum L10n {
             .fixedToDisplay: "Fixed to %@",
             .followsActiveDisplay: "The notch follows the active display.",
             .pinnedDisplayMissing: "The pinned display is not connected. The notch is temporarily using the active display.",
+            .fullScreen: "Full Screen",
+            .hideInFullScreen: "Hide in full screen",
+            .hideInFullScreenDetail: "Automatically hides the notch while an app is full screen. Works on displays with and without a notch.",
             .skillPointsAvailable: "%d skill points available",
             .oneSkillPointAvailable: "1 skill point available",
             .skillPointShort: "1 skill pt",
@@ -396,6 +402,9 @@ enum L10n {
             .fixedToDisplay: "固定到 %@",
             .followsActiveDisplay: "刘海窗口会跟随当前显示器。",
             .pinnedDisplayMissing: "固定的显示器未连接，刘海窗口暂时使用当前显示器。",
+            .fullScreen: "全屏",
+            .hideInFullScreen: "全屏时隐藏刘海",
+            .hideInFullScreenDetail: "有应用进入全屏时自动隐藏刘海窗口，有无刘海（灵动岛）的屏幕都适用。",
             .skillPointsAvailable: "%d 个技能点可用",
             .oneSkillPointAvailable: "1 个技能点可用",
             .skillPointShort: "1 技能点",
@@ -557,6 +566,9 @@ enum L10n {
             .fixedToDisplay: "%@ に固定",
             .followsActiveDisplay: "ノッチは現在のディスプレイに追従します。",
             .pinnedDisplayMissing: "固定したディスプレイが接続されていません。一時的に現在のディスプレイを使います。",
+            .fullScreen: "フルスクリーン",
+            .hideInFullScreen: "フルスクリーン時にノッチを隠す",
+            .hideInFullScreenDetail: "アプリがフルスクリーンの間、ノッチを自動的に隠します。ノッチの有無にかかわらず動作します。",
             .skillPointsAvailable: "%d スキルポイント使用可能",
             .oneSkillPointAvailable: "1 スキルポイント使用可能",
             .skillPointShort: "1 スキルpt",
