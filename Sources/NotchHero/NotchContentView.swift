@@ -24,7 +24,7 @@ final class NotchContentView: NSView {
     private let combatLabel = NSTextField(labelWithString: L10n.text(.tokenStreamStatus))
     private let heroHPLabel = NSTextField(labelWithString: "HP 88%")
     private let heroXPLabel = NSTextField(labelWithString: "XP 0%")
-    private let monsterHPLabel = NSTextField(labelWithString: L10n.string(.monsterHP, MonsterKind.promptWraith.shortName, 89, MonsterKind.promptWraith.maxHP, 74))
+    private let monsterHPLabel = NSTextField(labelWithString: L10n.string(.monsterHP, MonsterKind.promptWraith.shortName, "89", "12K", 74))
     private let heroHPBar = PixelBarView()
     private let heroXPBar = PixelBarView()
     private let monsterHPBar = PixelBarView()
@@ -84,11 +84,12 @@ final class NotchContentView: NSView {
         setupExpandedHUD()
         applyExperienceState(saveLevel: true)
         currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
-        battleScene.monsterKind = currentMonster
-        battleScene.monsterIsBoss = currentMonsterIsBoss
         battleScene.onSustainedHit = { [weak self] damageFraction in
             self?.applySustainedMonsterDamage(damageFraction)
         }
+        // Batch completion is now handled internally by scheduleMonsterRespawn
+        // Spawn initial monster batch
+        spawnNextMonsterBatch()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(languageChanged),
@@ -571,11 +572,15 @@ final class NotchContentView: NSView {
 
         let isCrit = Double.random(in: 0..<1) < CombatTiming.critChance
         let critMultiplier: CGFloat = isCrit ? 2 : 1
-        // Tokens are the damage number: what you spent is what you dealt.
-        let shownDamage = max(1, Int((CGFloat(strikeTokens) * critMultiplier).rounded()))
-        let baseDamage = CGFloat(strikeTokens) / 75 * SkillProgress.damageMultiplier() * critMultiplier
-        let baseFraction = min(0.42, max(0.025, baseDamage * selectedRole.damageMultiplier / 160))
-        let damageFraction = min(0.5, baseFraction * comboMultiplier)
+        // Tokens are the damage number: what you spent is what you dealt. Every
+        // strike also removes at least a sliver of the bar, so even small token
+        // bursts show visible progress.
+        let maxHP = CGFloat(StageProgress.maxHP(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss))
+        let basePoints = CGFloat(strikeTokens) * SkillProgress.damageMultiplier() * critMultiplier * selectedRole.damageMultiplier
+        let comboPoints = min(maxHP * 0.42, basePoints) * comboMultiplier
+        let damagePoints = min(maxHP * 0.5, max(comboPoints, maxHP * CombatTiming.minimumStrikeFraction))
+        let shownDamage = max(1, Int(damagePoints.rounded()))
+        let damageFraction = damagePoints / maxHP
 
         if let reward = damageMonster(by: damageFraction) {
             combatLabel.stringValue = defeatText(for: reward)
@@ -616,11 +621,9 @@ final class NotchContentView: NSView {
         }
 
         monsterRespawnWorkItem?.cancel()
-        let stageDivisor = StageProgress.damageDivisor(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss)
         let boostedDamage = max(0, damageFraction)
             * ItemSystem.damageMultiplier()
             * ItemSystem.attackDamageMultiplier()
-            / stageDivisor
         monsterHealth = max(0, monsterHealth - boostedDamage)
         battleScene.monsterHealth = monsterHealth
 
@@ -651,33 +654,49 @@ final class NotchContentView: NSView {
         return reward
     }
 
+    // Spawn a new batch of monsters (3-5 per batch, or 1 boss)
+    private func spawnNextMonsterBatch() {
+        currentMonster = currentMonster.next
+        currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
+        monsterHealth = 1
+        
+        // Spawn batch in battle scene
+        battleScene.spawnMonsterBatch(
+            kind: currentMonster,
+            isBoss: currentMonsterIsBoss,
+            stage: currentStage
+        )
+        
+        monsterHPLabel.textColor = currentMonster.hpColor
+        monsterHPBar.fillColor = currentMonster.hpColor
+        compactHeroView.monsterKind = currentMonster
+        compactHeroView.isBoss = currentMonsterIsBoss
+        
+        if currentMonsterIsBoss {
+            combatLabel.stringValue = L10n.string(.bossAppears, currentMonster.displayName)
+            battleScene.playStageBanner(L10n.string(.bossAppears, currentMonster.shortName), isBoss: true)
+        } else if hasRealUsageData, lootMessageExpiresAt.map({ $0 <= Date() }) != false {
+            combatLabel.stringValue = L10n.string(.monsterRespawned, currentMonster.displayName)
+        }
+        updateTitleLabel()
+        updateGameLabels()
+    }
+    
+    // Called when a single monster in the batch is defeated
     private func scheduleMonsterRespawn() {
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
+            guard let self else { return }
+            
+            // Try to advance to next monster in current batch
+            if self.battleScene.hasNextMonsterInBatch() {
+                self.battleScene.advanceToNextMonster()
+                self.monsterHealth = 1
+                self.updateGameLabels()
+            } else {
+                // Batch complete - spawn next batch
+                self.spawnNextMonsterBatch()
             }
-
-            currentMonster = currentMonster.next
-            currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
-            monsterHealth = 1
-            battleScene.monsterKind = currentMonster
-            battleScene.monsterIsBoss = currentMonsterIsBoss
-            battleScene.monsterHealth = monsterHealth
-            monsterHPLabel.textColor = currentMonster.hpColor
-            monsterHPBar.fillColor = currentMonster.hpColor
-            compactHeroView.monsterKind = currentMonster
-            compactHeroView.isBoss = currentMonsterIsBoss
-            battleScene.playMonsterRespawn()
-            if currentMonsterIsBoss {
-                combatLabel.stringValue = L10n.string(.bossAppears, currentMonster.displayName)
-                battleScene.playStageBanner(L10n.string(.bossAppears, currentMonster.shortName), isBoss: true)
-            } else if hasRealUsageData, lootMessageExpiresAt.map({ $0 <= Date() }) != false {
-                combatLabel.stringValue = L10n.string(.monsterRespawned, currentMonster.displayName)
-            }
-            updateTitleLabel()
-            updateGameLabels()
         }
-
         monsterRespawnWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: workItem)
     }
@@ -862,7 +881,7 @@ final class NotchContentView: NSView {
         if isCrit {
             damageFraction = min(0.6, damageFraction * 2)
         }
-        let displayDamage = max(1, Int(round(damageFraction * 260)))
+        let displayDamage = max(1, Int(round(damageFraction * CGFloat(StageProgress.maxHP(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss)))))
         let cooldown = max(castSkill.castCooldown, CombatTiming.minimumSkillCastInterval)
         skillEnergy = 0
         skillCooldownUntil = now.addingTimeInterval(cooldown)
@@ -994,7 +1013,7 @@ final class NotchContentView: NSView {
         let hpPercent = percentValue(heroHealth)
         let xpPercent = percentValue(xpProgress)
         let heroHP = statValue(heroHealth, maxValue: GameStats.heroMaxHP)
-        let monsterMaxHP = currentMonster.maxHP
+        let monsterMaxHP = StageProgress.maxHP(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss)
         let monsterHP = statValue(monsterHealth, maxValue: monsterMaxHP)
         compactHPLabel.stringValue = "H\(hpPercent)"
         compactXPLabel.stringValue = "X\(xpPercent)"
@@ -1003,7 +1022,7 @@ final class NotchContentView: NSView {
         let monsterName = currentMonsterIsBoss
             ? L10n.string(.bossMonsterName, currentMonster.shortName)
             : currentMonster.shortName
-        monsterHPLabel.stringValue = L10n.string(.monsterHP, monsterName, monsterHP, monsterMaxHP, percentValue(monsterHealth))
+        monsterHPLabel.stringValue = L10n.string(.monsterHP, monsterName, formatCompact(monsterHP), formatCompact(monsterMaxHP), percentValue(monsterHealth))
     }
 
     private func enterDefeatedState() {
@@ -1159,6 +1178,9 @@ private enum CombatTiming {
     static let comboWindow: TimeInterval = 12
     static let maxCombo = 10
     static let critChance = 0.12
+    // Every burst strike removes at least this fraction of the monster's HP
+    // bar, so even tiny token bursts read on the bar.
+    static let minimumStrikeFraction: CGFloat = 0.02
 
     // Attack intensity tiers keyed by tokens per scan burst. Higher tiers get
     // more staggered strikes and stronger visuals.
@@ -1220,7 +1242,7 @@ private enum StageTracker {
     }
 }
 
-private enum StageProgress {
+enum StageProgress {
     static let killsPerStage = 8
     static let bossStageInterval = 5
 
@@ -1232,11 +1254,14 @@ private enum StageProgress {
         stage > 0 && stage % bossStageInterval == 0
     }
 
-    static func damageDivisor(stage: Int, monster: MonsterKind, isBoss: Bool) -> CGFloat {
+    // Absolute HP pool: the monster's stat scaled into token-sized units, then
+    // deepened by stage and boss factors. These factors used to divide incoming
+    // damage instead — same overall pace, but folded into max HP so the bar
+    // always moves visibly.
+    static func maxHP(stage: Int, monster: MonsterKind, isBoss: Bool) -> Int {
         let stageFactor = 1 + 0.10 * CGFloat(max(1, stage) - 1)
-        let toughness = CGFloat(monster.maxHP) / 120
         let bossFactor: CGFloat = isBoss ? 2.2 : 1
-        return stageFactor * toughness * bossFactor
+        return max(1, Int((CGFloat(monster.maxHP) * 100 * stageFactor * bossFactor).rounded()))
     }
 
     static func xpMultiplier(stage: Int, isBoss: Bool) -> CGFloat {

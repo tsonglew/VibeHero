@@ -153,7 +153,7 @@ The Settings window also includes a display pinning control:
 - `Follow Active Display`: follow the active display
 - Display names such as `Built-in Retina Display`: keep the notch window fixed to that display
 
-The `Full Screen` section offers `Hide in full screen`: automatically hide the notch while an app covers the whole pinned screen. It is off by default and works on displays with and without a notch.
+The `Full Screen` section offers `Hide in full screen`: automatically hide the notch while an app covers the whole pinned screen. It is off by default and works on displays with and without a notch. While hidden, push the pointer against the top edge of the screen to pop the notch back out, like the menu bar; it hides again when the pointer leaves.
 
 ## Localization
 

@@ -52,9 +52,11 @@ local JSONL logs  ──►  TokenUsageScanner  ──►  token delta  ──�
 1. **Scan.** On launch `TokenUsageScanner` reads today's token counts from local
    Claude Code, Codex, and hook-fallback logs (timestamps + token counters only), then
    keeps tailing only newly appended lines every few seconds.
-2. **Strike.** Each new batch of tokens triggers a hero attack whose damage scales with the
-   token delta, the selected role's multiplier, learned skills, the active combo, equipped
-   gear, and any active Power Boost. Monster toughness and stage depth divide that damage.
+2. **Strike.** Each new batch of tokens triggers a hero attack whose damage equals the
+   token delta scaled by the selected role's multiplier, learned skills, the active combo,
+   equipped gear, and any active Power Boost. The monster's HP pool is displayed in token
+   units (e.g., 12K), so the damage number you see is exactly what it loses. Every strike
+   removes at least 2% of the HP bar, guaranteeing visible progress on every hit.
 3. **Idle risk.** When no new token usage is detected for too long, the monster
    counterattacks and drains the hero's HP — coding literally keeps you alive.
 4. **Reward.** Defeating a monster grants XP (level up → skill points) and rolls loot,
@@ -68,9 +70,11 @@ local JSONL logs  ──►  TokenUsageScanner  ──►  token delta  ──�
 Progress is measured in stages, persisted across launches:
 
 - Every **8 monster defeats** advance the stage counter by 1.
-- Monster toughness scales with stage depth: incoming damage is divided by
-  `1 + 0.10 × (stage − 1)`, and each monster's own HP stat acts as a toughness multiplier
-  (`maxHP ÷ 120`), so a Cache Golem really is beefier than a Token Slime.
+- Monster HP pools scale with stage depth and boss status so damage numbers stay
+  readable in token units:
+  `maxHP = monsterBaseHP × 100 × (1 + 0.10 × (stage − 1)) × (boss ? 2.2 : 1)`.
+  A Stage‑1 Prompt Wraith shows ~12K HP; a Stage‑5 Boss scales to ~44K.
+  The displayed damage is the exact token cost you spent on that hit.
 - XP rewards scale up with depth: `× (1 + 0.08 × (stage − 1))`.
 - **Every 5th stage is a Boss stage.** Bosses take an additional `×2.2` toughness, spawn
   larger with a crown, grant double XP, always drop **Rare or better equipment**, and burst
@@ -147,15 +151,15 @@ Pick a role in Settings to get a thematic perk. Roles tune active (token-driven)
 
 ## Monsters
 
-A rotating roster of token-waste creatures. Each has its own HP (a real toughness
-multiplier), XP reward, pixel form, and death/respawn shards.
+A rotating roster of token-waste creatures. Each has its own HP pool (displayed as token
+units), XP reward, pixel form, and death/respawn shards.
 
-| Monster         | HP  | Toughness | XP reward |
-|-----------------|-----|-----------|-----------|
-| Prompt Wraith   | 120 | ×1.00     | 45        |
-| Cache Golem     | 170 | ×1.42     | 65        |
-| Token Slime     | 95  | ×0.79     | 35        |
-| Null Sentinel   | 145 | ×1.21     | 55        |
+| Monster         | HP (token) | XP reward |
+|-----------------|------------|-----------|
+| Prompt Wraith   | 12,000     | 45        |
+| Cache Golem     | 17,000     | 65        |
+| Token Slime     | 9,500      | 35        |
+| Null Sentinel   | 14,500     | 55        |
 
 On Boss stages the current monster spawns as a crowned, larger boss variant (see
 [Stages & bosses](#stages--bosses)).
@@ -232,7 +236,9 @@ Open from the gear button in the expanded HUD.
 - **Display** — pin the notch to a specific screen (useful for multi-display setups); defaults
   to the main screen.
 - **Full Screen** — `Hide in full screen` hides the notch while an app covers the whole
-  pinned screen; off by default. Works on displays with and without a notch.
+  pinned screen; off by default. Works on displays with and without a notch. While hidden,
+  push the pointer against the top edge of the screen to pop the notch back out, like the
+  menu bar; it hides again when the pointer leaves.
 - **Scene** — pick the battle backdrop: Midnight Forest, Crystal Cave, Sunset Dunes, or
   Neon City.
 - **Skill tree** — spend points, rank up skills, toggle auto-cast.

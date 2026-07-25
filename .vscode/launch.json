@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:notch-hero}",
+            "name": "Debug NotchHero",
+            "target": "NotchHero",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug NotchHero"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:notch-hero}",
+            "name": "Release NotchHero",
+            "target": "NotchHero",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release NotchHero"
+        }
+    ]
+}

@@ -58,6 +58,7 @@ enum L10nKey: String, CaseIterable {
     case hookClaudeDetail
     case hookCodexDetail
     case hookOpenCodeDetail
+    case hookKimiDetail
     case followActiveDisplay
     case fixedToDisplay
     case followsActiveDisplay
@@ -234,6 +235,7 @@ enum L10n {
             .hookClaudeDetail: "Adds Claude Code hooks to ~/.claude/settings.json.",
             .hookCodexDetail: "Adds Codex hooks to ~/.codex/hooks.json.",
             .hookOpenCodeDetail: "Adds an OpenCode plugin to ~/.config/opencode/plugins.",
+            .hookKimiDetail: "Adds an MCP server to ~/.kimi-code/config.toml for token tracking.",
             .followActiveDisplay: "Follow Active Display",
             .fixedToDisplay: "Fixed to %@",
             .followsActiveDisplay: "The notch follows the active display.",
@@ -286,7 +288,7 @@ enum L10n {
             .monsterAttackingNoTokens: "No token spend. %@ attacks",
             .heroDefeated: "Defeated. Spend tokens to revive",
             .heroReviving: "Token stream revived the hero",
-            .monsterHP: "%@ HP %d/%d (%d%%)",
+            .monsterHP: "%@ HP %@/%@ (%d%%)",
             .hpPercent: "HP %d/100 (%d%%)",
             .xpPercent: "XP %@/%@ (%d%%)",
             .hpDamage: "HP-%d",
@@ -398,6 +400,7 @@ enum L10n {
             .hookClaudeDetail: "向 ~/.claude/settings.json 添加 Claude Code hooks。",
             .hookCodexDetail: "向 ~/.codex/hooks.json 添加 Codex hooks。",
             .hookOpenCodeDetail: "向 ~/.config/opencode/plugins 添加 OpenCode plugin。",
+            .hookKimiDetail: "向 ~/.kimi-code/config.toml 添加 MCP 服务器以追踪 token 用量。",
             .followActiveDisplay: "跟随当前显示器",
             .fixedToDisplay: "固定到 %@",
             .followsActiveDisplay: "刘海窗口会跟随当前显示器。",
@@ -450,7 +453,7 @@ enum L10n {
             .monsterAttackingNoTokens: "没有 token 消耗，%@ 发起攻击",
             .heroDefeated: "已被击败，消耗 token 可复活",
             .heroReviving: "Token 流复活了英雄",
-            .monsterHP: "%@ HP %d/%d (%d%%)",
+            .monsterHP: "%@ HP %@/%@ (%d%%)",
             .hpPercent: "HP %d/100 (%d%%)",
             .xpPercent: "XP %@/%@ (%d%%)",
             .hpDamage: "HP-%d",
@@ -562,6 +565,7 @@ enum L10n {
             .hookClaudeDetail: "~/.claude/settings.json に Claude Code hooks を追加します。",
             .hookCodexDetail: "~/.codex/hooks.json に Codex hooks を追加します。",
             .hookOpenCodeDetail: "~/.config/opencode/plugins に OpenCode plugin を追加します。",
+            .hookKimiDetail: "~/.kimi-code/config.toml に MCP サーバーを追加して token 使用量を追跡します。",
             .followActiveDisplay: "現在のディスプレイに追従",
             .fixedToDisplay: "%@ に固定",
             .followsActiveDisplay: "ノッチは現在のディスプレイに追従します。",
@@ -614,7 +618,7 @@ enum L10n {
             .monsterAttackingNoTokens: "token 使用なし。%@ が攻撃",
             .heroDefeated: "敗北。token 使用で復活",
             .heroReviving: "Token ストリームで復活",
-            .monsterHP: "%@ HP %d/%d (%d%%)",
+            .monsterHP: "%@ HP %@/%@ (%d%%)",
             .hpPercent: "HP %d/100 (%d%%)",
             .xpPercent: "XP %@/%@ (%d%%)",
             .hpDamage: "HP-%d",

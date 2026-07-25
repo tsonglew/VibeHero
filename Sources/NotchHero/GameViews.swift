@@ -1012,10 +1012,40 @@ final class PixelActorView: NSView {
     }
 }
 
+// Represents a single monster instance in the world queue
+private struct MonsterInstance {
+    let id = UUID()
+    let kind: MonsterKind
+    let isBoss: Bool
+    let maxHP: CGFloat
+    var currentHP: CGFloat
+    var worldX: CGFloat  // Fixed position in the scrolling world
+    
+    init(kind: MonsterKind, isBoss: Bool, maxHP: Int, worldX: CGFloat) {
+        self.kind = kind
+        self.isBoss = isBoss
+        self.maxHP = CGFloat(maxHP)
+        self.currentHP = self.maxHP
+        self.worldX = worldX
+    }
+    
+    var healthFraction: CGFloat {
+        currentHP / maxHP
+    }
+}
+
 final class BattleSceneView: NSView {
     private let heroView = PixelActorView(kind: .hero)
     private let monsterView = PixelActorView(kind: .monster)
     private let backdropView = BackdropView()
+    // Monster queue: multiple monsters waiting to fight, fought in order
+    private var monsterQueue: [MonsterInstance] = []
+    // Current monster index in the queue (-1 if none)
+    private var currentMonsterIndex: Int = -1
+    // World scroll offset (increases as we move right)
+    private var worldOffset: CGFloat = 0
+    // Hero's position in world coordinates (advances as we move right)
+    private var heroWorldX: CGFloat = 0
     private let slashLayer = CAShapeLayer()
     private let projectileLayer = CAShapeLayer()
     private let impactLayer = CAShapeLayer()
@@ -1054,11 +1084,17 @@ final class BattleSceneView: NSView {
     private var approachWorkItem: DispatchWorkItem?
 
     private func updateWorldMotion() {
-        let moving = rendersCombatEffects && !monsterEngaged
+        let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
         backdropView.scrollingEnabled = moving
-        heroView.setWalking(moving && !heroDefeated)
+        heroView.setWalking(moving)
     }
 
+    // The current target monster
+    private var currentMonster: MonsterInstance? {
+        guard currentMonsterIndex >= 0, currentMonsterIndex < monsterQueue.count else { return nil }
+        return monsterQueue[currentMonsterIndex]
+    }
+    
     // The monster's on-screen frame, honoring an in-flight approach animation.
     private var monsterVisualFrame: CGRect {
         monsterView.layer?.presentation()?.frame ?? monsterView.frame
@@ -1080,17 +1116,14 @@ final class BattleSceneView: NSView {
         }
     }
 
-    var monsterKind: MonsterKind = .promptWraith {
-        didSet {
-            monsterView.monsterKind = monsterKind
-            monsterOverheadHPBar.fillColor = monsterKind.hpColor
-        }
+    var monsterKind: MonsterKind {
+        get { currentMonster?.kind ?? .promptWraith }
+        set { monsterView.monsterKind = newValue }
     }
 
-    var monsterIsBoss: Bool = false {
-        didSet {
-            monsterView.isBoss = monsterIsBoss
-        }
+    var monsterIsBoss: Bool {
+        get { currentMonster?.isBoss ?? false }
+        set { monsterView.isBoss = newValue }
     }
 
     var backdrop: BattleBackdrop = .midnightForest {
@@ -1103,16 +1136,15 @@ final class BattleSceneView: NSView {
         }
     }
 
-    var monsterHealth: CGFloat = 1 {
-        didSet {
-            let clampedHealth = min(max(monsterHealth, 0), 1)
-            if monsterHealth != clampedHealth {
-                monsterHealth = clampedHealth
-                return
-            }
-
+    // Monster health fraction (0...1) of the current target
+    var monsterHealth: CGFloat {
+        get { currentMonster?.healthFraction ?? 1 }
+        set {
+            guard currentMonsterIndex >= 0, currentMonsterIndex < monsterQueue.count else { return }
+            let clampedHealth = min(max(newValue, 0), 1)
+            monsterQueue[currentMonsterIndex].currentHP = clampedHealth * monsterQueue[currentMonsterIndex].maxHP
             monsterOverheadHPBar.value = clampedHealth
-            if oldValue > monsterHealth, rendersCombatEffects {
+            if newValue < monsterHealth, rendersCombatEffects {
                 pulseMonster()
             }
         }
@@ -1198,23 +1230,15 @@ final class BattleSceneView: NSView {
             height: actorSize
         )
 
-        // The monster keeps its current x (it may be mid approach); place it at
-        // the fight position when it has no valid spot — anything left of the
-        // fight position is stale geometry and gets repaired.
-        let monsterX = monsterView.frame.isEmpty
-            || monsterView.frame.minX < monsterFightX
-            || monsterView.frame.minX > bounds.width + 40
-            ? monsterFightX
-            : monsterView.frame.minX
-        monsterView.frame = NSRect(x: monsterX, y: bounds.height - actorSize - 5, width: actorSize, height: actorSize)
+        // Only set initial monster position if not yet positioned
+        // Position is managed by updateMonsterPosition() during world scrolling
+        if monsterView.frame.isEmpty {
+            monsterView.frame = NSRect(x: monsterFightX, y: bounds.height - actorSize - 5, width: actorSize, height: actorSize)
+        }
         groundLayer.frame = NSRect(x: 12, y: bounds.height - 8, width: bounds.width - 24, height: 2)
-        monsterOverheadHPBar.frame = NSRect(
-            x: monsterView.frame.minX,
-            y: max(2, monsterView.frame.minY - 7),
-            width: monsterView.frame.width,
-            height: 3
-        )
-        monsterHitFlashLayer.frame = monsterView.frame.insetBy(dx: -2, dy: -2)
+        
+        // Update HP bar position based on current monster view position
+        updateMonsterPosition()
     }
 
     func playMonsterDeath() {
@@ -1277,83 +1301,166 @@ final class BattleSceneView: NSView {
         }
     }
 
-    func playMonsterRespawn() {
+    // Generate a batch of monsters with fixed world positions
+    func spawnMonsterBatch(kind: MonsterKind, isBoss: Bool, stage: Int) {
         approachWorkItem?.cancel()
+        monsterQueue.removeAll()
+        // Note: worldOffset and heroWorldX are NOT reset - they continue advancing
+        // This ensures hero's world position is always increasing
+        
+        // Generate more monsters per batch for higher density
+        let count = isBoss ? 1 : Int.random(in: 5...8)
+        let baseMaxHP = StageProgress.maxHP(stage: stage, monster: kind, isBoss: isBoss)
+        
+        // Space monsters closer together: each monster is ~120-180 units apart
+        // This means monsters appear frequently as the hero walks
+        var lastX = monsterFightX - 80 // Start first monster closer to hero
+        for i in 0..<count {
+            let spacing = CGFloat.random(in: 120...180)
+            lastX += spacing
+            var monster = MonsterInstance(
+                kind: kind,
+                isBoss: isBoss && i == 0, // Only first monster is boss in boss stages
+                maxHP: baseMaxHP,
+                worldX: lastX
+            )
+            monsterQueue.append(monster)
+        }
+        
+        // Start with first monster
+        currentMonsterIndex = 0
+        setupCurrentMonster()
+    }
+    
+    // Setup the current monster view for the monster at currentMonsterIndex
+    private func setupCurrentMonster() {
+        guard let monster = currentMonster else {
+            // All monsters defeated, batch complete
+            monsterView.alphaValue = 0
+            monsterEngaged = false
+            updateWorldMotion()
+            return
+        }
+        
         monsterView.layer?.removeAllAnimations()
         monsterView.alphaValue = 1
         monsterView.needsDisplay = true
+        monsterView.monsterKind = monster.kind
+        monsterView.isBoss = monster.isBoss
+        monsterOverheadHPBar.fillColor = monster.kind.hpColor
         monsterEngaged = false
-
-        // The monster stands at a fixed spot ahead in the world; the scrolling
-        // world carries it into view from the right edge.
+        
+        // Position monster based on its worldX relative to current worldOffset
+        updateMonsterPosition()
+        updateWorldMotion()
+    }
+    
+    // Update monster view position based on world scrolling
+    private func updateMonsterPosition() {
+        guard let monster = currentMonster else { return }
+        
         let fightFrame = NSRect(
             x: monsterFightX,
             y: monsterView.frame.minY,
             width: monsterView.frame.width,
             height: monsterView.frame.height
         )
-
-        guard rendersCombatEffects else {
+        
+        // Monster's screen X = worldX - worldOffset
+        let screenX = monster.worldX - worldOffset
+        
+        if screenX <= monsterFightX {
+            // Monster has reached fight position
             monsterView.frame = fightFrame
-            monsterEngaged = true
+            if !monsterEngaged {
+                monsterEngaged = true
+                updateWorldMotion()
+                playMonsterArrivalEffects()
+            }
+        } else {
+            // Monster is still approaching from the right
+            monsterView.frame = NSRect(
+                x: screenX,
+                y: fightFrame.minY,
+                width: fightFrame.width,
+                height: fightFrame.height
+            )
+            monsterEngaged = false
             updateWorldMotion()
-            return
         }
-
-        let spawnX = bounds.width + 6
-        monsterView.frame = NSRect(
-            x: spawnX,
-            y: fightFrame.minY,
-            width: fightFrame.width,
-            height: fightFrame.height
+        
+        // Update HP bar position
+        let barFrame = NSRect(
+            x: monsterView.frame.minX,
+            y: max(2, monsterView.frame.minY - 7),
+            width: monsterView.frame.width,
+            height: 3
         )
-        updateWorldMotion()
-
-        playFlash(color: monsterKind.hpColor.withAlphaComponent(monsterIsBoss ? 0.34 : 0.18))
-        if monsterIsBoss {
+        monsterOverheadHPBar.frame = barFrame
+        monsterOverheadHPBar.value = monster.healthFraction
+    }
+    
+    // Play effects when monster arrives at fight position
+    private func playMonsterArrivalEffects() {
+        guard let monster = currentMonster else { return }
+        
+        playFlash(color: monster.kind.hpColor.withAlphaComponent(monster.isBoss ? 0.34 : 0.18))
+        if monster.isBoss {
             shake(layer: monsterView.layer, distance: 5, duration: 0.3)
         }
-
+        
         let scale = CAKeyframeAnimation(keyPath: "transform.scale")
         scale.values = [0.15, 1.2, 0.92, 1.0]
         scale.keyTimes = [0, 0.48, 0.78, 1]
-        scale.duration = monsterIsBoss ? 0.5 : 0.36
+        scale.duration = monster.isBoss ? 0.5 : 0.36
         scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
         monsterView.layer?.add(scale, forKey: "monsterRespawnScale")
-
+        
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
         opacity.values = [0.0, 1.0, 0.65, 1.0]
         opacity.keyTimes = [0, 0.42, 0.70, 1]
-        opacity.duration = monsterIsBoss ? 0.5 : 0.36
+        opacity.duration = monster.isBoss ? 0.5 : 0.36
         monsterView.layer?.add(opacity, forKey: "monsterRespawnOpacity")
-
-        // Slide in at ground scroll speed so the monster reads as anchored to
-        // the world; the overhead HP bar rides along.
-        let distance = max(0, spawnX - fightFrame.minX)
-        let duration = max(0.6, distance / BackdropView.groundScrollSpeed)
-        let barFrame = NSRect(
-            x: fightFrame.minX,
-            y: max(2, fightFrame.minY - 7),
-            width: fightFrame.width,
-            height: 3
-        )
-        monsterOverheadHPBar.frame = barFrame.offsetBy(dx: distance, dy: 0)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .linear)
-            monsterView.animator().frame = fightFrame
-            monsterOverheadHPBar.animator().frame = barFrame
+    }
+    
+    // Check if there are more monsters in the current batch
+    func hasNextMonsterInBatch() -> Bool {
+        return currentMonsterIndex + 1 < monsterQueue.count
+    }
+    
+    // Move to next monster in queue after defeating current
+    func advanceToNextMonster() {
+        currentMonsterIndex += 1
+        
+        if currentMonsterIndex >= monsterQueue.count {
+            // All monsters in batch defeated
+            monsterView.alphaValue = 0
+            monsterEngaged = false
+            updateWorldMotion()
+        } else {
+            // Setup next monster
+            setupCurrentMonster()
         }
-
-        let arrival = DispatchWorkItem { [weak self] in
-            guard let self, self.monsterView.alphaValue == 1 else {
-                return
-            }
-            self.monsterEngaged = true
-            self.updateWorldMotion()
+    }
+    
+    // Called each frame/tick to update world scrolling and monster positions
+    func updateWorld(dt: TimeInterval) {
+        guard rendersCombatEffects else { return }
+        
+        // If not engaged and hero is walking, scroll the world
+        let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
+        if moving {
+            let delta = BackdropView.groundScrollSpeed * CGFloat(dt)
+            worldOffset += delta
+            heroWorldX += delta  // Hero advances in world coordinates
+            updateMonsterPosition()
         }
-        approachWorkItem = arrival
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: arrival)
+    }
+    
+    // Legacy method for compatibility - spawns a single monster batch
+    func playMonsterRespawn() {
+        // This is now handled by spawnMonsterBatch called from NotchContentView
+        setupCurrentMonster()
     }
 
     func playLootDrop(_ drop: LootDrop) {

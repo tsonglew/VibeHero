@@ -7,6 +7,8 @@ final class NotchWindow: NSPanel {
     private var collapseWorkItem: DispatchWorkItem?
     private var isExpanded = false
     private var hiddenForFullScreen = false
+    private var fullScreenPeekMonitor: Any?
+    private var isPeekingInFullScreen = false
 
     init() {
         let initialScreen = ScreenPinning.preferredScreen()
@@ -77,7 +79,51 @@ final class NotchWindow: NSPanel {
         if shouldHide {
             collapseWorkItem?.cancel()
             orderOut(nil)
+            startFullScreenPeekMonitor()
         } else {
+            stopFullScreenPeekMonitor()
+            orderFrontRegardless()
+        }
+    }
+
+    // While hidden in full screen, watch the pointer globally (mouse events
+    // do not require accessibility permission) so a push against the top edge
+    // of the pinned screen pops the notch back out, like the menu bar.
+    private func startFullScreenPeekMonitor() {
+        guard fullScreenPeekMonitor == nil else {
+            return
+        }
+
+        fullScreenPeekMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+            self?.handleFullScreenPeekMouseMoved()
+        }
+    }
+
+    private func stopFullScreenPeekMonitor() {
+        if let fullScreenPeekMonitor {
+            NSEvent.removeMonitor(fullScreenPeekMonitor)
+        }
+        fullScreenPeekMonitor = nil
+        isPeekingInFullScreen = false
+    }
+
+    private func handleFullScreenPeekMouseMoved() {
+        guard hiddenForFullScreen, FullScreenHidePreference.load(),
+              let screen = ScreenPinning.preferredScreen() else {
+            return
+        }
+
+        let location = NSEvent.mouseLocation
+        if isPeekingInFullScreen {
+            // Hide again once the pointer leaves the pinned screen or drops
+            // below the window (the expanded window's bottom edge is lower,
+            // so the threshold follows the current frame).
+            if !screen.frame.contains(location) || location.y < frame.minY - 12 {
+                isPeekingInFullScreen = false
+                orderOut(nil)
+            }
+        } else if screen.frame.contains(location), location.y >= screen.frame.maxY - 4 {
+            isPeekingInFullScreen = true
             orderFrontRegardless()
         }
     }
