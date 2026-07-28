@@ -36,6 +36,7 @@ app: release
 	@mkdir -p "$(APP_CONTENTS)/MacOS" "$(APP_CONTENTS)/Resources"
 	@cp ".build/release/$(APP_NAME)" "$(APP_CONTENTS)/MacOS/$(PRODUCT_NAME)"
 	@chmod +x "$(APP_CONTENTS)/MacOS/$(PRODUCT_NAME)"
+	@cp "Resources/VibeHero.icns" "$(APP_CONTENTS)/Resources/VibeHero.icns"
 	@printf "%s\n" \
 		'<?xml version="1.0" encoding="UTF-8"?>' \
 		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -43,6 +44,8 @@ app: release
 		'<dict>' \
 		'  <key>CFBundleExecutable</key>' \
 		'  <string>$(PRODUCT_NAME)</string>' \
+		'  <key>CFBundleIconFile</key>' \
+		'  <string>VibeHero</string>' \
 		'  <key>CFBundleIdentifier</key>' \
 		'  <string>$(BUNDLE_ID)</string>' \
 		'  <key>CFBundleName</key>' \
@@ -52,9 +55,9 @@ app: release
 		'  <key>CFBundlePackageType</key>' \
 		'  <string>APPL</string>' \
 		'  <key>CFBundleShortVersionString</key>' \
-		'  <string>0.1.0</string>' \
+		'  <string>0.1.1</string>' \
 		'  <key>CFBundleVersion</key>' \
-		'  <string>1</string>' \
+		'  <string>2</string>' \
 		'  <key>LSMinimumSystemVersion</key>' \
 		'  <string>14.0</string>' \
 		'  <key>LSUIElement</key>' \
