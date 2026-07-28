@@ -1,10 +1,8 @@
 # Vibe Hero
 
 <p align="center">
-  <img src="docs/images/Gemini_Generated_Image_eppdgteppdgteppd.png" alt="Vibe Hero poster: the pixel hero logo over the tagline “Turning Code Tokens into Hero Power!”, the four supported agents feeding the notch HUD, a golem counterattack, and the live agent session list" width="470">
+  <img src="docs/images/vibe-hero-post.png" alt="Vibe Hero poster: a golden VIBE HERO logo and the pixel hero over a neon-city backdrop with lightning, the tagline “Turning Code Tokens into Hero Power!”, the four supported agents with their token counts, the battle HUD mid-golem-counterattack, and the live agent session list" width="470">
 </p>
-
-<p align="center"><em>Stop coding and the monster hits back. Keep coding, be a hero.</em></p>
 
 Your MacBook notch is a pixel-art RPG, and your token usage is the sword.
 
