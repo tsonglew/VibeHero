@@ -49,6 +49,9 @@ enum L10nKey: String, CaseIterable {
     case heroRole
     case display
     case skills
+    case inDevelopment
+    case inDevelopmentSkillsDetail
+    case inDevelopmentEquipmentDetail
     case tokenHooks
     case tokenHooksDetail
     case installHook
@@ -205,6 +208,103 @@ enum L10nKey: String, CaseIterable {
     case backdropCrystalCave
     case backdropSunsetDunes
     case backdropNeonCity
+
+    // MARK: - Skill Tree
+    case skillTreeAttack
+    case skillTreeDefense
+    case skillTreeEconomy
+    case skillTreeAbility
+    case availableSkillPoints
+    case selectNodePrompt
+    case currentLevel
+    case requiresHeroLevel
+    case requiresParent
+    case nodeUpgrade
+    case nodeDowngrade
+    case nodeMaxed
+
+    // Attack nodes
+    case nodeAttackPower1
+    case nodeAttackPower1Desc
+    case nodeAttackPower2
+    case nodeAttackPower2Desc
+    case nodeCritChance1
+    case nodeCritChance1Desc
+    case nodeAttackSpeed1
+    case nodeAttackSpeed1Desc
+    case nodeAttackMastery
+    case nodeAttackMasteryDesc
+    case nodeBerserk
+    case nodeBerserkDesc
+
+    // Defense nodes
+    case nodeHPBonus1
+    case nodeHPBonus1Desc
+    case nodeHPBonus2
+    case nodeHPBonus2Desc
+    case nodeArmor1
+    case nodeArmor1Desc
+    case nodeHPRegen1
+    case nodeHPRegen1Desc
+    case nodeVitality
+    case nodeVitalityDesc
+    case nodeImmortal
+    case nodeImmortalDesc
+
+    // Economy nodes
+    case nodeGoldBonus1
+    case nodeGoldBonus1Desc
+    case nodeGoldBonus2
+    case nodeGoldBonus2Desc
+    case nodeLootChance1
+    case nodeLootChance1Desc
+    case nodeXPBonus1
+    case nodeXPBonus1Desc
+    case nodeMidas
+    case nodeMidasDesc
+    case nodeJackpot
+    case nodeJackpotDesc
+
+    // Ability nodes
+    case nodeCooldownReduction1
+    case nodeCooldownReduction1Desc
+    case nodeCooldownReduction2
+    case nodeCooldownReduction2Desc
+    case nodeSkillPower1
+    case nodeSkillPower1Desc
+    case nodeEnergyRegen1
+    case nodeEnergyRegen1Desc
+    case nodeAbilityMastery
+    case nodeAbilityMasteryDesc
+    case nodeArcanePower
+    case nodeArcanePowerDesc
+
+    // Effect descriptions
+    case effectDamageMultiplier
+    case effectCritChance
+    case effectAttackSpeed
+    case effectMaxHP
+    case effectDamageReduction
+    case effectHPRegen
+    case effectGoldMultiplier
+    case effectLootChance
+    case effectXPMultiplier
+    case effectCooldownReduction
+    case effectSkillDamage
+    case effectEnergyRegen
+
+    // MARK: - Settings Tabs
+    case tabGeneral
+    case tabGame
+    case tabEquipment
+    case tabTools
+    case tabSessions
+
+    // MARK: - Session Monitor
+    case activeSessions
+    case noActiveSessions
+    case sessionCount
+    case moreSessions
 }
 
 enum L10n {
@@ -226,6 +326,9 @@ enum L10n {
             .heroRole: "Hero Role",
             .display: "Display",
             .skills: "Skills",
+            .inDevelopment: "In development",
+            .inDevelopmentSkillsDetail: "Skills are not playable yet.",
+            .inDevelopmentEquipmentDetail: "Equipment is not playable yet.",
             .tokenHooks: "Token Hooks",
             .tokenHooksDetail: "Install hooks to capture token events faster and fall back when local logs are delayed.",
             .installHook: "Install",
@@ -381,7 +484,104 @@ enum L10n {
             .backdropMidnightForest: "Midnight Forest",
             .backdropCrystalCave: "Crystal Cave",
             .backdropSunsetDunes: "Sunset Dunes",
-            .backdropNeonCity: "Neon City"
+            .backdropNeonCity: "Neon City",
+
+            // MARK: - Skill Tree
+            .skillTreeAttack: "Attack",
+            .skillTreeDefense: "Defense",
+            .skillTreeEconomy: "Economy",
+            .skillTreeAbility: "Ability",
+            .availableSkillPoints: "Available Points: %d",
+            .selectNodePrompt: "Select a node",
+            .currentLevel: "Level: %d/%d",
+            .requiresHeroLevel: "Hero Lv%d",
+            .requiresParent: "Requires %@",
+            .nodeUpgrade: "Upgrade",
+            .nodeDowngrade: "Downgrade",
+            .nodeMaxed: "Maxed",
+
+            // Attack nodes
+            .nodeAttackPower1: "Power Strike I",
+            .nodeAttackPower1Desc: "Increase attack damage by 5%",
+            .nodeAttackPower2: "Power Strike II",
+            .nodeAttackPower2Desc: "Further increase attack damage",
+            .nodeCritChance1: "Critical Eye",
+            .nodeCritChance1Desc: "Increase critical hit chance",
+            .nodeAttackSpeed1: "Swift Strike",
+            .nodeAttackSpeed1Desc: "Increase attack speed",
+            .nodeAttackMastery: "Attack Mastery",
+            .nodeAttackMasteryDesc: "Significantly boost attack power",
+            .nodeBerserk: "Berserk",
+            .nodeBerserkDesc: "Massive damage boost",
+
+            // Defense nodes
+            .nodeHPBonus1: "Vitality I",
+            .nodeHPBonus1Desc: "Increase max HP by 10%",
+            .nodeHPBonus2: "Vitality II",
+            .nodeHPBonus2Desc: "Further increase max HP",
+            .nodeArmor1: "Iron Skin",
+            .nodeArmor1Desc: "Reduce damage taken",
+            .nodeHPRegen1: "Regeneration",
+            .nodeHPRegen1Desc: "Slowly regenerate HP",
+            .nodeVitality: "Vital Force",
+            .nodeVitalityDesc: "Greatly increase max HP",
+            .nodeImmortal: "Immortal",
+            .nodeImmortalDesc: "Massive damage reduction",
+
+            // Economy nodes
+            .nodeGoldBonus1: "Gold Hunter I",
+            .nodeGoldBonus1Desc: "Increase gold gain by 10%",
+            .nodeGoldBonus2: "Gold Hunter II",
+            .nodeGoldBonus2Desc: "Further increase gold gain",
+            .nodeLootChance1: "Lucky Find",
+            .nodeLootChance1Desc: "Increase loot drop chance",
+            .nodeXPBonus1: "Wisdom",
+            .nodeXPBonus1Desc: "Increase XP gain",
+            .nodeMidas: "Midas Touch",
+            .nodeMidasDesc: "Greatly increase gold gain",
+            .nodeJackpot: "Jackpot",
+            .nodeJackpotDesc: "Massive loot bonus",
+
+            // Ability nodes
+            .nodeCooldownReduction1: "Quick Cast I",
+            .nodeCooldownReduction1Desc: "Reduce skill cooldown",
+            .nodeCooldownReduction2: "Quick Cast II",
+            .nodeCooldownReduction2Desc: "Further reduce cooldown",
+            .nodeSkillPower1: "Empowered",
+            .nodeSkillPower1Desc: "Increase skill damage",
+            .nodeEnergyRegen1: "Energy Flow",
+            .nodeEnergyRegen1Desc: "Faster energy regeneration",
+            .nodeAbilityMastery: "Ability Mastery",
+            .nodeAbilityMasteryDesc: "Greatly boost skill power",
+            .nodeArcanePower: "Arcane Power",
+            .nodeArcanePowerDesc: "Massive cooldown reduction",
+
+            // Effect descriptions
+            .effectDamageMultiplier: "Damage",
+            .effectCritChance: "Crit Chance",
+            .effectAttackSpeed: "Attack Speed",
+            .effectMaxHP: "Max HP",
+            .effectDamageReduction: "Damage Reduction",
+            .effectHPRegen: "HP Regen",
+            .effectGoldMultiplier: "Gold Gain",
+            .effectLootChance: "Loot Chance",
+            .effectXPMultiplier: "XP Gain",
+            .effectCooldownReduction: "Cooldown",
+            .effectSkillDamage: "Skill Damage",
+            .effectEnergyRegen: "Energy Regen",
+
+            // Settings Tabs
+            .tabGeneral: "General",
+            .tabGame: "Game",
+            .tabEquipment: "Equipment",
+            .tabTools: "Tools",
+            .tabSessions: "Sessions",
+
+            // Session Monitor
+            .activeSessions: "Active IDE Sessions",
+            .noActiveSessions: "No active sessions",
+            .sessionCount: "%d sessions",
+            .moreSessions: "+%d more"
         ],
         .simplifiedChinese: [
             .showNotch: "显示刘海",
@@ -391,6 +591,9 @@ enum L10n {
             .heroRole: "英雄角色",
             .display: "显示器",
             .skills: "技能",
+            .inDevelopment: "开发中",
+            .inDevelopmentSkillsDetail: "技能功能还在开发中，暂不可用。",
+            .inDevelopmentEquipmentDetail: "装备功能还在开发中，暂不可用。",
             .tokenHooks: "Token Hooks",
             .tokenHooksDetail: "安装 hook 以更快捕获 token 事件，并在本地日志延迟时兜底。",
             .installHook: "安装",
@@ -546,7 +749,104 @@ enum L10n {
             .backdropMidnightForest: "午夜森林",
             .backdropCrystalCave: "水晶洞窟",
             .backdropSunsetDunes: "落日沙丘",
-            .backdropNeonCity: "霓虹都市"
+            .backdropNeonCity: "霓虹都市",
+
+            // MARK: - 技能树
+            .skillTreeAttack: "攻击",
+            .skillTreeDefense: "防御",
+            .skillTreeEconomy: "经济",
+            .skillTreeAbility: "技能",
+            .availableSkillPoints: "可用点数: %d",
+            .selectNodePrompt: "选择一个节点",
+            .currentLevel: "等级: %d/%d",
+            .requiresHeroLevel: "需要英雄等级 %d",
+            .requiresParent: "需要 %@",
+            .nodeUpgrade: "升级",
+            .nodeDowngrade: "降级",
+            .nodeMaxed: "已满级",
+
+            // 攻击节点
+            .nodeAttackPower1: "强力打击 I",
+            .nodeAttackPower1Desc: "攻击力提升 5%",
+            .nodeAttackPower2: "强力打击 II",
+            .nodeAttackPower2Desc: "进一步提升攻击力",
+            .nodeCritChance1: "暴击之眼",
+            .nodeCritChance1Desc: "提升暴击率",
+            .nodeAttackSpeed1: "迅捷打击",
+            .nodeAttackSpeed1Desc: "提升攻击速度",
+            .nodeAttackMastery: "攻击精通",
+            .nodeAttackMasteryDesc: "大幅提升攻击力",
+            .nodeBerserk: "狂暴",
+            .nodeBerserkDesc: "攻击力暴增",
+
+            // 防御节点
+            .nodeHPBonus1: "生命力 I",
+            .nodeHPBonus1Desc: "最大生命值提升 10%",
+            .nodeHPBonus2: "生命力 II",
+            .nodeHPBonus2Desc: "进一步提升最大生命值",
+            .nodeArmor1: "铁皮皮肤",
+            .nodeArmor1Desc: "减少受到的伤害",
+            .nodeHPRegen1: "生命恢复",
+            .nodeHPRegen1Desc: "缓慢恢复生命值",
+            .nodeVitality: "生命之力",
+            .nodeVitalityDesc: "大幅提升最大生命值",
+            .nodeImmortal: "不朽",
+            .nodeImmortalDesc: "大幅减少受到伤害",
+
+            // 经济节点
+            .nodeGoldBonus1: "黄金猎人 I",
+            .nodeGoldBonus1Desc: "金币获取提升 10%",
+            .nodeGoldBonus2: "黄金猎人 II",
+            .nodeGoldBonus2Desc: "进一步提升金币获取",
+            .nodeLootChance1: "幸运发现",
+            .nodeLootChance1Desc: "提升战利品掉落率",
+            .nodeXPBonus1: "智慧",
+            .nodeXPBonus1Desc: "提升经验获取",
+            .nodeMidas: "点金之手",
+            .nodeMidasDesc: "大幅提升金币获取",
+            .nodeJackpot: "头奖",
+            .nodeJackpotDesc: "战利品暴增",
+
+            // 技能节点
+            .nodeCooldownReduction1: "快速施法 I",
+            .nodeCooldownReduction1Desc: "减少技能冷却时间",
+            .nodeCooldownReduction2: "快速施法 II",
+            .nodeCooldownReduction2Desc: "进一步减少冷却时间",
+            .nodeSkillPower1: "技能强化",
+            .nodeSkillPower1Desc: "提升技能伤害",
+            .nodeEnergyRegen1: "能量流动",
+            .nodeEnergyRegen1Desc: "加快能量恢复",
+            .nodeAbilityMastery: "技能精通",
+            .nodeAbilityMasteryDesc: "大幅提升技能威力",
+            .nodeArcanePower: "奥术之力",
+            .nodeArcanePowerDesc: "大幅减少冷却时间",
+
+            // 效果描述
+            .effectDamageMultiplier: "伤害",
+            .effectCritChance: "暴击率",
+            .effectAttackSpeed: "攻击速度",
+            .effectMaxHP: "最大生命",
+            .effectDamageReduction: "伤害减免",
+            .effectHPRegen: "生命恢复",
+            .effectGoldMultiplier: "金币获取",
+            .effectLootChance: "战利品几率",
+            .effectXPMultiplier: "经验获取",
+            .effectCooldownReduction: "冷却时间",
+            .effectSkillDamage: "技能伤害",
+            .effectEnergyRegen: "能量恢复",
+
+            // 设置标签页
+            .tabGeneral: "通用",
+            .tabGame: "游戏",
+            .tabEquipment: "装备",
+            .tabTools: "工具",
+            .tabSessions: "会话",
+
+            // 会话监控
+            .activeSessions: "活跃 IDE 会话",
+            .noActiveSessions: "暂无活跃会话",
+            .sessionCount: "%d 个会话",
+            .moreSessions: "还有 %d 个"
         ],
         .japanese: [
             .showNotch: "ノッチを表示",
@@ -556,6 +856,9 @@ enum L10n {
             .heroRole: "ヒーロー役割",
             .display: "ディスプレイ",
             .skills: "スキル",
+            .inDevelopment: "開発中",
+            .inDevelopmentSkillsDetail: "スキル機能はまだ利用できません。",
+            .inDevelopmentEquipmentDetail: "装備機能はまだ利用できません。",
             .tokenHooks: "Token Hooks",
             .tokenHooksDetail: "Hook を入れて token イベントをより速く取得し、ローカルログ遅延時の補完に使います。",
             .installHook: "インストール",
@@ -711,7 +1014,104 @@ enum L10n {
             .backdropMidnightForest: "深夜の森",
             .backdropCrystalCave: "クリスタル洞窟",
             .backdropSunsetDunes: "夕陽の砂丘",
-            .backdropNeonCity: "ネオンシティ"
+            .backdropNeonCity: "ネオンシティ",
+
+            // MARK: - スキルツリー
+            .skillTreeAttack: "攻撃",
+            .skillTreeDefense: "防御",
+            .skillTreeEconomy: "経済",
+            .skillTreeAbility: "スキル",
+            .availableSkillPoints: "使用可能ポイント: %d",
+            .selectNodePrompt: "ノードを選択",
+            .currentLevel: "レベル: %d/%d",
+            .requiresHeroLevel: "英雄レベル %d 必要",
+            .requiresParent: "%@ 必要",
+            .nodeUpgrade: "アップグレード",
+            .nodeDowngrade: "ダウングレード",
+            .nodeMaxed: "最大レベル",
+
+            // 攻撃ノード
+            .nodeAttackPower1: "強打 I",
+            .nodeAttackPower1Desc: "攻撃力が 5% 上昇",
+            .nodeAttackPower2: "強打 II",
+            .nodeAttackPower2Desc: "さらに攻撃力が上昇",
+            .nodeCritChance1: "致命の目",
+            .nodeCritChance1Desc: "クリティカル率が上昇",
+            .nodeAttackSpeed1: "速撃",
+            .nodeAttackSpeed1Desc: "攻撃速度が上昇",
+            .nodeAttackMastery: "攻撃の極意",
+            .nodeAttackMasteryDesc: "攻撃力が大幅に上昇",
+            .nodeBerserk: "バーサーク",
+            .nodeBerserkDesc: "攻撃力が劇的に上昇",
+
+            // 防御ノード
+            .nodeHPBonus1: "生命力 I",
+            .nodeHPBonus1Desc: "最大 HP が 10% 上昇",
+            .nodeHPBonus2: "生命力 II",
+            .nodeHPBonus2Desc: "さらに最大 HP が上昇",
+            .nodeArmor1: "鉄の皮膚",
+            .nodeArmor1Desc: "被ダメージを軽減",
+            .nodeHPRegen1: "再生",
+            .nodeHPRegen1Desc: "HP が徐々に回復",
+            .nodeVitality: "生命の力",
+            .nodeVitalityDesc: "最大 HP が大幅に上昇",
+            .nodeImmortal: "不死",
+            .nodeImmortalDesc: "被ダメージを大幅に軽減",
+
+            // 経済ノード
+            .nodeGoldBonus1: "金狩り I",
+            .nodeGoldBonus1Desc: "ゴールド獲得が 10% 上昇",
+            .nodeGoldBonus2: "金狩り II",
+            .nodeGoldBonus2Desc: "さらにゴールド獲得が上昇",
+            .nodeLootChance1: "幸運な発見",
+            .nodeLootChance1Desc: "戦利品ドロップ率が上昇",
+            .nodeXPBonus1: "知恵",
+            .nodeXPBonus1Desc: "経験値獲得が上昇",
+            .nodeMidas: "ミダスの手",
+            .nodeMidasDesc: "ゴールド獲得が大幅に上昇",
+            .nodeJackpot: "大当たり",
+            .nodeJackpotDesc: "戦利品が劇的に増加",
+
+            // スキルノード
+            .nodeCooldownReduction1: "迅速詠唱 I",
+            .nodeCooldownReduction1Desc: "スキルクールダウン短縮",
+            .nodeCooldownReduction2: "迅速詠唱 II",
+            .nodeCooldownReduction2Desc: "さらにクールダウン短縮",
+            .nodeSkillPower1: "強化",
+            .nodeSkillPower1Desc: "スキルダメージが上昇",
+            .nodeEnergyRegen1: "エネルギー流動",
+            .nodeEnergyRegen1Desc: "エネルギー回復が加速",
+            .nodeAbilityMastery: "スキルの極意",
+            .nodeAbilityMasteryDesc: "スキル威力が大幅に上昇",
+            .nodeArcanePower: "神秘の力",
+            .nodeArcanePowerDesc: "クールダウンが大幅に短縮",
+
+            // 効果説明
+            .effectDamageMultiplier: "ダメージ",
+            .effectCritChance: "クリ率",
+            .effectAttackSpeed: "攻撃速度",
+            .effectMaxHP: "最大 HP",
+            .effectDamageReduction: "ダメージ軽減",
+            .effectHPRegen: "HP 回復",
+            .effectGoldMultiplier: "ゴールド獲得",
+            .effectLootChance: "戦利品率",
+            .effectXPMultiplier: "経験値獲得",
+            .effectCooldownReduction: "クールダウン",
+            .effectSkillDamage: "スキルダメージ",
+            .effectEnergyRegen: "エネルギー回復",
+
+            // 設定タブ
+            .tabGeneral: "一般",
+            .tabGame: "ゲーム",
+            .tabEquipment: "装備",
+            .tabTools: "ツール",
+            .tabSessions: "セッション",
+
+            // セッション監視
+            .activeSessions: "アクティブ IDE セッション",
+            .noActiveSessions: "アクティブなセッションなし",
+            .sessionCount: "%d セッション",
+            .moreSessions: "他 %d 件"
         ]
     ]
 }

@@ -191,7 +191,7 @@ enum TokenHookInstaller {
 
         // Update Kimi Code config to use our MCP server
         var content = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
-        
+
         // Check if already configured
         if content.contains("kimi-token-server") {
             return

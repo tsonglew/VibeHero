@@ -1,41 +1,41 @@
 import AppKit
 
 final class NotchSettingsWindow: NSWindow {
-    private let settingsView = NotchSettingsView()
+    private let tabViewController = SettingsTabViewController()
 
     var onRoleChanged: (() -> Void)? {
-        get { settingsView.onRoleChanged }
-        set { settingsView.onRoleChanged = newValue }
+        get { tabViewController.onRoleChanged }
+        set { tabViewController.onRoleChanged = newValue }
     }
 
     var onDisplayChanged: (() -> Void)? {
-        get { settingsView.onDisplayChanged }
-        set { settingsView.onDisplayChanged = newValue }
+        get { tabViewController.onDisplayChanged }
+        set { tabViewController.onDisplayChanged = newValue }
     }
 
     var onSkillChanged: (() -> Void)? {
-        get { settingsView.onSkillChanged }
-        set { settingsView.onSkillChanged = newValue }
+        get { tabViewController.onSkillChanged }
+        set { tabViewController.onSkillChanged = newValue }
     }
 
     var onBackdropChanged: (() -> Void)? {
-        get { settingsView.onBackdropChanged }
-        set { settingsView.onBackdropChanged = newValue }
+        get { tabViewController.onBackdropChanged }
+        set { tabViewController.onBackdropChanged = newValue }
     }
 
     var onFullScreenHideChanged: (() -> Void)? {
-        get { settingsView.onFullScreenHideChanged }
-        set { settingsView.onFullScreenHideChanged = newValue }
+        get { tabViewController.onFullScreenHideChanged }
+        set { tabViewController.onFullScreenHideChanged = newValue }
     }
 
     var onLanguageChanged: (() -> Void)? {
-        get { settingsView.onLanguageChanged }
-        set { settingsView.onLanguageChanged = newValue }
+        get { tabViewController.onLanguageChanged }
+        set { tabViewController.onLanguageChanged = newValue }
     }
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 580),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -43,13 +43,23 @@ final class NotchSettingsWindow: NSWindow {
 
         title = L10n.text(.settingsTitle)
         isReleasedWhenClosed = false
-        contentMinSize = NSSize(width: 460, height: 500)
-        contentView = settingsView
+        contentMinSize = NSSize(width: 580, height: 480)
+
+        let tabView = tabViewController.view
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        contentView?.addSubview(tabView)
+
+        NSLayoutConstraint.activate([
+            tabView.leadingAnchor.constraint(equalTo: contentView!.leadingAnchor),
+            tabView.trailingAnchor.constraint(equalTo: contentView!.trailingAnchor),
+            tabView.topAnchor.constraint(equalTo: contentView!.topAnchor),
+            tabView.bottomAnchor.constraint(equalTo: contentView!.bottomAnchor)
+        ])
     }
 
     func refresh() {
         title = L10n.text(.settingsTitle)
-        settingsView.refresh()
+        tabViewController.refresh()
     }
 
     func centerNear(rect anchorRect: NSRect) {
@@ -73,21 +83,132 @@ final class NotchSettingsWindow: NSWindow {
     }
 }
 
-private final class NotchSettingsView: NSView {
+// MARK: - Tab View Controller
+
+final class SettingsTabViewController: NSViewController {
     var onRoleChanged: (() -> Void)?
     var onDisplayChanged: (() -> Void)?
     var onSkillChanged: (() -> Void)?
-    var onLanguageChanged: (() -> Void)?
     var onBackdropChanged: (() -> Void)?
     var onFullScreenHideChanged: (() -> Void)?
+    var onLanguageChanged: (() -> Void)?
 
-    private let titleLabel = NSTextField(labelWithString: "")
+    private let tabView = NSTabView()
+
+    // Tab view controllers
+    private let generalTab = GeneralSettingsTab()
+    private let gameTab = GameSettingsTab()
+    private let equipmentTab = EquipmentSettingsTab()
+    private let toolsTab = ToolsSettingsTab()
+    private let sessionsTab = SessionsSettingsTab()
+
+    override func loadView() {
+        view = NSView()
+        view.wantsLayer = true
+
+        setupTabs()
+    }
+
+    private func setupTabs() {
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        tabView.tabViewBorderType = .none
+        view.addSubview(tabView)
+
+        NSLayoutConstraint.activate([
+            tabView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabView.topAnchor.constraint(equalTo: view.topAnchor),
+            tabView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
+        // General Tab
+        let generalItem = NSTabViewItem(identifier: "general")
+        generalItem.label = L10n.text(.tabGeneral)
+        generalItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        generalItem.viewController = generalTab
+        generalTab.onLanguageChanged = { [weak self] in
+            self?.updateTabLabels()
+            self?.onLanguageChanged?()
+        }
+        generalTab.onDisplayChanged = { [weak self] in
+            self?.onDisplayChanged?()
+        }
+        generalTab.onFullScreenHideChanged = { [weak self] in
+            self?.onFullScreenHideChanged?()
+        }
+        generalTab.onBackdropChanged = { [weak self] in
+            self?.onBackdropChanged?()
+        }
+        tabView.addTabViewItem(generalItem)
+
+        // Game Tab
+        let gameItem = NSTabViewItem(identifier: "game")
+        gameItem.label = L10n.text(.tabGame)
+        gameItem.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
+        gameItem.viewController = gameTab
+        gameTab.onRoleChanged = { [weak self] in
+            self?.onRoleChanged?()
+        }
+        gameTab.onSkillChanged = { [weak self] in
+            self?.onSkillChanged?()
+        }
+        tabView.addTabViewItem(gameItem)
+
+        // Equipment Tab
+        let equipmentItem = NSTabViewItem(identifier: "equipment")
+        equipmentItem.label = L10n.text(.tabEquipment)
+        equipmentItem.image = NSImage(systemSymbolName: "shield", accessibilityDescription: nil)
+        equipmentItem.viewController = equipmentTab
+        tabView.addTabViewItem(equipmentItem)
+
+        // Tools Tab
+        let toolsItem = NSTabViewItem(identifier: "tools")
+        toolsItem.label = L10n.text(.tabTools)
+        toolsItem.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)
+        toolsItem.viewController = toolsTab
+        tabView.addTabViewItem(toolsItem)
+
+        // Sessions Tab
+        let sessionsItem = NSTabViewItem(identifier: "sessions")
+        sessionsItem.label = L10n.text(.tabSessions)
+        sessionsItem.image = NSImage(systemSymbolName: "rectangle.stack.person.crop", accessibilityDescription: nil)
+        sessionsItem.viewController = sessionsTab
+        tabView.addTabViewItem(sessionsItem)
+    }
+
+    private func updateTabLabels() {
+        tabView.tabViewItems[0].label = L10n.text(.tabGeneral)
+        tabView.tabViewItems[1].label = L10n.text(.tabGame)
+        tabView.tabViewItems[2].label = L10n.text(.tabEquipment)
+        tabView.tabViewItems[3].label = L10n.text(.tabTools)
+        tabView.tabViewItems[4].label = L10n.text(.tabSessions)
+
+        generalTab.refresh()
+        gameTab.refresh()
+        equipmentTab.refresh()
+        toolsTab.refresh()
+        sessionsTab.refresh()
+    }
+
+    func refresh() {
+        updateTabLabels()
+    }
+}
+
+// MARK: - General Settings Tab
+
+final class GeneralSettingsTab: NSViewController {
+    var onLanguageChanged: (() -> Void)?
+    var onDisplayChanged: (() -> Void)?
+    var onFullScreenHideChanged: (() -> Void)?
+    var onBackdropChanged: (() -> Void)?
+
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+
+    // UI Elements
     private let languageLabel = NSTextField(labelWithString: "")
     private let languagePopup = NSPopUpButton()
-    private let roleLabel = NSTextField(labelWithString: "")
-    private let roleDetailLabel = NSTextField(labelWithString: "")
-    private let rolePerkLabel = NSTextField(labelWithString: "")
-    private let roleGridStack = NSStackView()
     private let displayLabel = NSTextField(labelWithString: "")
     private let displayPopup = NSPopUpButton()
     private let displayDetailLabel = NSTextField(labelWithString: "")
@@ -95,255 +216,141 @@ private final class NotchSettingsView: NSView {
     private let fullScreenToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let fullScreenDetailLabel = NSTextField(labelWithString: "")
     private let backdropLabel = NSTextField(labelWithString: "")
-    private let backdropRowStack = NSStackView()
-    private let skillsLabel = NSTextField(labelWithString: "")
-    private let skillPointsLabel = NSTextField(labelWithString: "")
-    private let skillStack = NSStackView()
-    private let hooksLabel = NSTextField(labelWithString: "")
-    private let hooksDetailLabel = NSTextField(labelWithString: "")
-    private let hooksStack = NSStackView()
-    private let equipmentLabel = NSTextField(labelWithString: "")
-    private let equipmentStack = NSStackView()
-    private let scrollView = NSScrollView()
-    private var roleChoiceViews: [RoleChoiceView] = []
-    private var skillRows: [SkillRowView] = []
-    private var hookRows: [TokenHookRowView] = []
-    private var equipmentRows: [EquipmentRowView] = []
     private var backdropChoiceViews: [BackdropChoiceView] = []
     private var displayIDs: [Int?] = []
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    override func loadView() {
+        view = NSView()
         setup()
-        refresh()
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    func refresh() {
-        refreshRoleOptions()
-        refreshDisplayOptions()
-        refreshSkillOptions()
-        refreshLanguageOptions()
-        refreshFullScreenOption()
-        applyLocalizedText()
-        equipmentRows.forEach { $0.refresh() }
-        backdropChoiceViews.forEach { $0.refreshSelection() }
     }
 
     private func setup() {
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // Setup scroll view
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -24)
+        ])
+
+        // Style labels
         languageLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        roleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         displayLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         fullScreenLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        skillsLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        hooksLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        equipmentLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         backdropLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
-        [roleDetailLabel, rolePerkLabel, displayDetailLabel, fullScreenDetailLabel, skillPointsLabel, hooksDetailLabel].forEach {
+        [displayDetailLabel, fullScreenDetailLabel].forEach {
             $0.font = NSFont.systemFont(ofSize: 12, weight: .regular)
             $0.textColor = .secondaryLabelColor
             $0.lineBreakMode = .byWordWrapping
             $0.maximumNumberOfLines = 2
         }
 
+        // Language
         languagePopup.target = self
         languagePopup.action = #selector(languageChanged)
-        displayPopup.target = self
-        displayPopup.action = #selector(displayChanged)
-        fullScreenToggle.target = self
-        fullScreenToggle.action = #selector(fullScreenHideChanged)
 
         let languageStack = NSStackView(views: [languageLabel, languagePopup])
         languageStack.orientation = .vertical
         languageStack.alignment = .leading
         languageStack.spacing = 8
-        languagePopup.translatesAutoresizingMaskIntoConstraints = false
         languagePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
-        roleChoiceViews = HeroRole.allCases.map { role in
-            let choiceView = RoleChoiceView(role: role)
-            choiceView.onSelected = { [weak self] selectedRole in
-                self?.selectRole(selectedRole)
-            }
-            return choiceView
-        }
-
-        roleGridStack.orientation = .vertical
-        roleGridStack.alignment = .leading
-        roleGridStack.spacing = 8
-        for rowStart in stride(from: 0, to: roleChoiceViews.count, by: 3) {
-            let rowViews = Array(roleChoiceViews[rowStart..<min(rowStart + 3, roleChoiceViews.count)])
-            let rowStack = NSStackView(views: rowViews)
-            rowStack.orientation = .horizontal
-            rowStack.alignment = .top
-            rowStack.spacing = 8
-            roleGridStack.addArrangedSubview(rowStack)
-        }
-
-        let roleStack = NSStackView(views: [roleLabel, roleGridStack, roleDetailLabel, rolePerkLabel])
-        roleStack.orientation = .vertical
-        roleStack.alignment = .leading
-        roleStack.spacing = 8
+        // Display
+        displayPopup.target = self
+        displayPopup.action = #selector(displayChanged)
 
         let displayStack = NSStackView(views: [displayLabel, displayPopup, displayDetailLabel])
         displayStack.orientation = .vertical
         displayStack.alignment = .leading
         displayStack.spacing = 8
-        displayPopup.translatesAutoresizingMaskIntoConstraints = false
         displayPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+
+        // Full Screen
+        fullScreenToggle.target = self
+        fullScreenToggle.action = #selector(fullScreenHideChanged)
 
         let fullScreenStack = NSStackView(views: [fullScreenLabel, fullScreenToggle, fullScreenDetailLabel])
         fullScreenStack.orientation = .vertical
         fullScreenStack.alignment = .leading
         fullScreenStack.spacing = 8
 
+        // Backdrop
+        let backdropRowStack = NSStackView()
+        backdropRowStack.orientation = .horizontal
+        backdropRowStack.alignment = .top
+        backdropRowStack.spacing = 8
+
         backdropChoiceViews = BattleBackdrop.allCases.map { backdrop in
             let choiceView = BackdropChoiceView(backdrop: backdrop)
             choiceView.onSelected = { [weak self] selectedBackdrop in
                 self?.selectBackdrop(selectedBackdrop)
             }
+            backdropRowStack.addArrangedSubview(choiceView)
             return choiceView
         }
-        backdropRowStack.orientation = .horizontal
-        backdropRowStack.alignment = .top
-        backdropRowStack.spacing = 8
-        backdropChoiceViews.forEach { backdropRowStack.addArrangedSubview($0) }
 
         let backdropStack = NSStackView(views: [backdropLabel, backdropRowStack])
         backdropStack.orientation = .vertical
         backdropStack.alignment = .leading
         backdropStack.spacing = 8
 
-        skillStack.orientation = .vertical
-        skillStack.alignment = .leading
-        skillStack.spacing = 10
-        skillRows = HeroSkill.allCases.map { skill in
-            let row = SkillRowView(skill: skill)
-            row.onUpgrade = { [weak self] selectedSkill in
-                self?.upgrade(selectedSkill)
-            }
-            row.onAutoCastChanged = { [weak self] selectedSkill, enabled in
-                SkillProgress.setAutoCastEnabled(enabled, for: selectedSkill)
-                self?.refreshSkillOptions()
-                self?.onSkillChanged?()
-            }
-            return row
-        }
-        skillRows.forEach { skillStack.addArrangedSubview($0) }
-
-        let skillsStack = NSStackView(views: [skillsLabel, skillPointsLabel, skillStack])
-        skillsStack.orientation = .vertical
-        skillsStack.alignment = .leading
-        skillsStack.spacing = 8
-
-        equipmentStack.orientation = .vertical
-        equipmentStack.alignment = .leading
-        equipmentStack.spacing = 8
-        equipmentRows = EquipmentSlot.allCases.map { slot in
-            let row = EquipmentRowView(slot: slot)
-            equipmentStack.addArrangedSubview(row)
-            return row
-        }
-
-        let equipmentSectionStack = NSStackView(views: [equipmentLabel, equipmentStack])
-        equipmentSectionStack.orientation = .vertical
-        equipmentSectionStack.alignment = .leading
-        equipmentSectionStack.spacing = 8
-
-        hooksStack.orientation = .vertical
-        hooksStack.alignment = .leading
-        hooksStack.spacing = 8
-        hookRows = CodingToolHook.allCases.map { tool in
-            let row = TokenHookRowView(tool: tool)
-            row.onInstall = { [weak self] selectedTool in
-                self?.installHook(selectedTool)
-            }
-            hooksStack.addArrangedSubview(row)
-            return row
-        }
-
-        let hookSettingsStack = NSStackView(views: [hooksLabel, hooksDetailLabel, hooksStack])
-        hookSettingsStack.orientation = .vertical
-        hookSettingsStack.alignment = .leading
-        hookSettingsStack.spacing = 8
-
-        let contentStack = NSStackView(views: [
-            titleLabel,
-            makeSeparator(),
+        // Main stack
+        let mainStack = NSStackView(views: [
             languageStack,
-            makeSeparator(),
-            roleStack,
             makeSeparator(),
             displayStack,
             makeSeparator(),
             fullScreenStack,
             makeSeparator(),
-            backdropStack,
-            makeSeparator(),
-            hookSettingsStack,
-            makeSeparator(),
-            skillsStack,
-            makeSeparator(),
-            equipmentSectionStack
+            backdropStack
         ])
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 16
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let documentView = NSView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(contentStack)
-
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = documentView
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        addSubview(scrollView)
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 20
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(mainStack)
 
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 24),
-            contentStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -24),
-            contentStack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 22),
-            contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -24),
-            roleDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            rolePerkLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            roleGridStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            displayDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            fullScreenDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            hooksDetailLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            hooksStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            skillPointsLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            skillStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            equipmentStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            displayDetailLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            fullScreenDetailLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor)
         ])
+
+        refresh()
     }
 
-    private func refreshRoleOptions() {
-        let selectedRole = HeroRole.load()
-        roleChoiceViews.forEach { $0.refresh(selectedRole: selectedRole) }
-        updateRoleDetails(for: selectedRole)
-    }
+    func refresh() {
+        languageLabel.stringValue = L10n.text(.language)
+        displayLabel.stringValue = L10n.text(.display)
+        fullScreenLabel.stringValue = L10n.text(.fullScreen)
+        fullScreenToggle.title = L10n.text(.hideInFullScreen)
+        fullScreenDetailLabel.stringValue = L10n.text(.hideInFullScreenDetail)
+        backdropLabel.stringValue = L10n.text(.backdrop)
 
-    private func refreshDisplayOptions() {
+        // Language options
+        languagePopup.removeAllItems()
+        languagePopup.addItems(withTitles: AppLanguage.allCases.map(\.displayName))
+        let selectedLanguage = AppLanguage.load()
+        languagePopup.selectItem(at: AppLanguage.allCases.firstIndex(of: selectedLanguage) ?? 0)
+
+        // Display options
         let screens = NSScreen.screens
         displayIDs = [nil] + screens.map(\.notchDisplayID)
-
         displayPopup.removeAllItems()
         displayPopup.addItem(withTitle: L10n.text(.followActiveDisplay))
         screens.forEach { screen in
@@ -361,37 +368,17 @@ private final class NotchSettingsView: NSView {
                 ? L10n.text(.followsActiveDisplay)
                 : L10n.text(.pinnedDisplayMissing)
         }
-    }
 
-    private func refreshLanguageOptions() {
-        languagePopup.removeAllItems()
-        languagePopup.addItems(withTitles: AppLanguage.allCases.map(\.displayName))
-        let selectedLanguage = AppLanguage.load()
-        languagePopup.selectItem(at: AppLanguage.allCases.firstIndex(of: selectedLanguage) ?? 0)
-    }
+        // Full screen toggle
+        fullScreenToggle.state = FullScreenHidePreference.load() ? .on : .off
 
-    private func applyLocalizedText() {
-        titleLabel.stringValue = L10n.text(.settingsTitle)
-        languageLabel.stringValue = L10n.text(.language)
-        roleLabel.stringValue = L10n.text(.heroRole)
-        displayLabel.stringValue = L10n.text(.display)
-        fullScreenLabel.stringValue = L10n.text(.fullScreen)
-        fullScreenToggle.title = L10n.text(.hideInFullScreen)
-        fullScreenDetailLabel.stringValue = L10n.text(.hideInFullScreenDetail)
-        skillsLabel.stringValue = L10n.text(.skills)
-        hooksLabel.stringValue = L10n.text(.tokenHooks)
-        hooksDetailLabel.stringValue = L10n.text(.tokenHooksDetail)
-        equipmentLabel.stringValue = L10n.text(.equipmentSectionTitle)
-        backdropLabel.stringValue = L10n.text(.backdrop)
-        hookRows.forEach { $0.refresh() }
+        // Backdrop
+        backdropChoiceViews.forEach { $0.refreshSelection() }
     }
 
     @objc private func languageChanged() {
         let index = languagePopup.indexOfSelectedItem
-        guard AppLanguage.allCases.indices.contains(index) else {
-            return
-        }
-
+        guard AppLanguage.allCases.indices.contains(index) else { return }
         AppLanguage.save(AppLanguage.allCases[index])
         refresh()
         onLanguageChanged?()
@@ -401,12 +388,8 @@ private final class NotchSettingsView: NSView {
         let index = displayPopup.indexOfSelectedItem
         let selectedDisplayID = displayIDs.indices.contains(index) ? displayIDs[index] : nil
         ScreenPinning.save(selectedDisplayID)
-        refreshDisplayOptions()
+        refresh()
         onDisplayChanged?()
-    }
-
-    private func refreshFullScreenOption() {
-        fullScreenToggle.state = FullScreenHidePreference.load() ? .on : .off
     }
 
     @objc private func fullScreenHideChanged() {
@@ -414,29 +397,168 @@ private final class NotchSettingsView: NSView {
         onFullScreenHideChanged?()
     }
 
-    private func refreshSkillOptions() {
-        let heroLevel = SkillProgress.loadHeroLevel()
-        skillPointsLabel.stringValue = "LV \(heroLevel) · \(SkillProgress.statusText(heroLevel: heroLevel))"
-        skillRows.forEach { $0.refresh(heroLevel: heroLevel) }
+    private func selectBackdrop(_ backdrop: BattleBackdrop) {
+        backdrop.save()
+        refresh()
+        onBackdropChanged?()
     }
 
-    private func upgrade(_ skill: HeroSkill) {
-        let heroLevel = SkillProgress.loadHeroLevel()
-        guard SkillProgress.upgrade(skill, heroLevel: heroLevel) else {
-            return
-        }
+    private func makeSeparator() -> NSBox {
+        let separator = NSBox()
+        separator.boxType = .separator
+        return separator
+    }
+}
 
-        refreshSkillOptions()
-        onSkillChanged?()
+// MARK: - Game Settings Tab
+
+final class GameSettingsTab: NSViewController {
+    var onRoleChanged: (() -> Void)?
+    var onSkillChanged: (() -> Void)?
+
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+
+    private let roleLabel = NSTextField(labelWithString: "")
+    private let roleDetailLabel = NSTextField(labelWithString: "")
+    private let rolePerkLabel = NSTextField(labelWithString: "")
+    private var roleChoiceViews: [RoleChoiceView] = []
+    private let skillTreeView = SkillTreeView()
+    private let skillsOverlay = DevelopmentOverlayView(detail: .inDevelopmentSkillsDetail)
+
+    override func loadView() {
+        view = NSView()
+        setup()
     }
 
-    private func installHook(_ tool: CodingToolHook) {
-        do {
-            try TokenHookInstaller.install(tool)
-            hookRows.forEach { $0.refresh() }
-        } catch {
-            hookRows.first { $0.tool == tool }?.showError(error.localizedDescription)
+    private func setup() {
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            // Pinning the bottom too would cap the document at the viewport, which
+            // clipped the 500pt skill module with no way to scroll to it. Filling
+            // the viewport is the minimum; taller content scrolls.
+            contentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor)
+        ])
+        roleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        roleDetailLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        roleDetailLabel.textColor = .secondaryLabelColor
+        roleDetailLabel.lineBreakMode = .byWordWrapping
+        roleDetailLabel.maximumNumberOfLines = 2
+        rolePerkLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        rolePerkLabel.textColor = .secondaryLabelColor
+        rolePerkLabel.lineBreakMode = .byWordWrapping
+        rolePerkLabel.maximumNumberOfLines = 2
+
+        let roleGridStack = NSStackView()
+        roleGridStack.orientation = .vertical
+        roleGridStack.alignment = .leading
+        roleGridStack.spacing = 8
+
+        roleChoiceViews = HeroRole.allCases.map { role in
+            let choiceView = RoleChoiceView(role: role)
+            choiceView.onSelected = { [weak self] selectedRole in
+                self?.selectRole(selectedRole)
+            }
+            return choiceView
         }
+
+        for rowStart in stride(from: 0, to: roleChoiceViews.count, by: 3) {
+            let rowViews = Array(roleChoiceViews[rowStart..<min(rowStart + 3, roleChoiceViews.count)])
+            let rowStack = NSStackView(views: rowViews)
+            rowStack.orientation = .horizontal
+            rowStack.alignment = .top
+            rowStack.spacing = 8
+            roleGridStack.addArrangedSubview(rowStack)
+        }
+
+        let roleStack = NSStackView(views: [roleLabel, roleGridStack, roleDetailLabel, rolePerkLabel])
+        roleStack.orientation = .vertical
+        roleStack.alignment = .leading
+        roleStack.spacing = 8
+
+        // Skill Tree
+        skillTreeView.onSkillChanged = { [weak self] in
+            self?.onSkillChanged?()
+        }
+        skillTreeView.translatesAutoresizingMaskIntoConstraints = false
+        skillTreeView.heightAnchor.constraint(equalToConstant: 500).isActive = true
+
+        // The tree is still being built, so it ships behind a scrim. The overlay
+        // covers the tree exactly, which is also what keeps its nodes from being
+        // clicked while they are not ready.
+        let skillTreeContainer = NSView()
+        skillTreeContainer.translatesAutoresizingMaskIntoConstraints = false
+        skillTreeContainer.addSubview(skillTreeView)
+        skillTreeContainer.addSubview(skillsOverlay)
+
+        NSLayoutConstraint.activate([
+            skillTreeView.leadingAnchor.constraint(equalTo: skillTreeContainer.leadingAnchor),
+            skillTreeView.trailingAnchor.constraint(equalTo: skillTreeContainer.trailingAnchor),
+            skillTreeView.topAnchor.constraint(equalTo: skillTreeContainer.topAnchor),
+            skillTreeView.bottomAnchor.constraint(equalTo: skillTreeContainer.bottomAnchor),
+            skillsOverlay.leadingAnchor.constraint(equalTo: skillTreeView.leadingAnchor),
+            skillsOverlay.trailingAnchor.constraint(equalTo: skillTreeView.trailingAnchor),
+            skillsOverlay.topAnchor.constraint(equalTo: skillTreeView.topAnchor),
+            skillsOverlay.bottomAnchor.constraint(equalTo: skillTreeView.bottomAnchor)
+        ])
+
+        let skillTreeLabel = NSTextField(labelWithString: "")
+        skillTreeLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        skillTreeLabel.stringValue = L10n.text(.skills)
+
+        let skillTreeStack = NSStackView(views: [skillTreeLabel, skillTreeContainer])
+        skillTreeStack.orientation = .vertical
+        skillTreeStack.alignment = .leading
+        skillTreeStack.spacing = 8
+
+        // Main stack
+        let mainStack = NSStackView(views: [
+            roleStack,
+            makeSeparator(),
+            skillTreeStack
+        ])
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 20
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            contentView.bottomAnchor.constraint(greaterThanOrEqualTo: mainStack.bottomAnchor, constant: 24),
+            skillTreeContainer.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            roleDetailLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            rolePerkLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor)
+        ])
+
+        refresh()
+    }
+
+    func refresh() {
+        roleLabel.stringValue = L10n.text(.heroRole)
+
+        let selectedRole = HeroRole.load()
+        roleChoiceViews.forEach { $0.refresh(selectedRole: selectedRole) }
+        updateRoleDetails(for: selectedRole)
+
+        skillTreeView.refresh()
+        skillsOverlay.refresh()
     }
 
     private func updateRoleDetails(for role: HeroRole) {
@@ -446,21 +568,288 @@ private final class NotchSettingsView: NSView {
 
     private func selectRole(_ role: HeroRole) {
         role.save()
-        roleChoiceViews.forEach { $0.refresh(selectedRole: role) }
-        updateRoleDetails(for: role)
+        refresh()
         onRoleChanged?()
-    }
-
-    private func selectBackdrop(_ backdrop: BattleBackdrop) {
-        backdrop.save()
-        backdropChoiceViews.forEach { $0.refreshSelection() }
-        onBackdropChanged?()
     }
 
     private func makeSeparator() -> NSBox {
         let separator = NSBox()
         separator.boxType = .separator
         return separator
+    }
+}
+
+// MARK: - Equipment Settings Tab
+
+final class EquipmentSettingsTab: NSViewController {
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+
+    private let equipmentLabel = NSTextField(labelWithString: "")
+    private let equipmentStack = NSStackView()
+    private let equipmentOverlay = DevelopmentOverlayView(detail: .inDevelopmentEquipmentDetail)
+    private var equipmentRows: [EquipmentRowView] = []
+
+    override func loadView() {
+        view = NSView()
+        setup()
+    }
+
+    private func setup() {
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            // Same reason as the game tab: pinning the bottom as well would cap the
+            // document at the viewport, so a tall slot list could neither fit nor
+            // scroll. Fill the viewport, then grow.
+            contentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor)
+        ])
+
+        equipmentLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+
+        equipmentStack.orientation = .vertical
+        equipmentStack.alignment = .leading
+        equipmentStack.spacing = 8
+
+        equipmentRows = EquipmentSlot.allCases.map { slot in
+            let row = EquipmentRowView(slot: slot)
+            equipmentStack.addArrangedSubview(row)
+            return row
+        }
+
+        // Equipment is not playable yet either, so the slots ship behind the same
+        // scrim as the skill tree - it dims them and, as the frontmost view here,
+        // swallows the clicks that would otherwise open a slot.
+        let equipmentContainer = NSView()
+        equipmentContainer.translatesAutoresizingMaskIntoConstraints = false
+        equipmentStack.translatesAutoresizingMaskIntoConstraints = false
+        equipmentContainer.addSubview(equipmentStack)
+        equipmentContainer.addSubview(equipmentOverlay)
+
+        NSLayoutConstraint.activate([
+            equipmentStack.leadingAnchor.constraint(equalTo: equipmentContainer.leadingAnchor),
+            equipmentStack.trailingAnchor.constraint(equalTo: equipmentContainer.trailingAnchor),
+            equipmentStack.topAnchor.constraint(equalTo: equipmentContainer.topAnchor),
+            equipmentStack.bottomAnchor.constraint(equalTo: equipmentContainer.bottomAnchor),
+            equipmentOverlay.leadingAnchor.constraint(equalTo: equipmentStack.leadingAnchor),
+            equipmentOverlay.trailingAnchor.constraint(equalTo: equipmentStack.trailingAnchor),
+            equipmentOverlay.topAnchor.constraint(equalTo: equipmentStack.topAnchor),
+            equipmentOverlay.bottomAnchor.constraint(equalTo: equipmentStack.bottomAnchor)
+        ])
+
+        let mainStack = NSStackView(views: [equipmentLabel, equipmentContainer])
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 16
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            contentView.bottomAnchor.constraint(greaterThanOrEqualTo: mainStack.bottomAnchor, constant: 24),
+            equipmentContainer.widthAnchor.constraint(equalTo: mainStack.widthAnchor)
+        ])
+
+        refresh()
+    }
+
+    func refresh() {
+        equipmentLabel.stringValue = L10n.text(.equipmentSectionTitle)
+        equipmentRows.forEach { $0.refresh() }
+        equipmentOverlay.refresh()
+    }
+}
+
+// MARK: - Tools Settings Tab
+
+final class ToolsSettingsTab: NSViewController {
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+
+    private let hooksLabel = NSTextField(labelWithString: "")
+    private let hooksDetailLabel = NSTextField(labelWithString: "")
+    private let hooksStack = NSStackView()
+    private var hookRows: [TokenHookRowView] = []
+
+    override func loadView() {
+        view = NSView()
+        setup()
+    }
+
+    private func setup() {
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -24)
+        ])
+
+        hooksLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        hooksDetailLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        hooksDetailLabel.textColor = .secondaryLabelColor
+        hooksDetailLabel.lineBreakMode = .byWordWrapping
+        hooksDetailLabel.maximumNumberOfLines = 3
+
+        hooksStack.orientation = .vertical
+        hooksStack.alignment = .leading
+        hooksStack.spacing = 8
+
+        hookRows = CodingToolHook.allCases.map { tool in
+            let row = TokenHookRowView(tool: tool)
+            row.onInstall = { [weak self] selectedTool in
+                self?.installHook(selectedTool)
+            }
+            hooksStack.addArrangedSubview(row)
+            // A leading-aligned vertical stack would otherwise leave each card at
+            // its minimum width, squeezing the detail text.
+            row.widthAnchor.constraint(equalTo: hooksStack.widthAnchor).isActive = true
+            return row
+        }
+
+        let mainStack = NSStackView(views: [hooksLabel, hooksDetailLabel, hooksStack])
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 12
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(mainStack)
+
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            hooksDetailLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            hooksStack.widthAnchor.constraint(equalTo: mainStack.widthAnchor)
+        ])
+
+        refresh()
+    }
+
+    func refresh() {
+        hooksLabel.stringValue = L10n.text(.tokenHooks)
+        hooksDetailLabel.stringValue = L10n.text(.tokenHooksDetail)
+        hookRows.forEach { $0.refresh() }
+    }
+
+    private func installHook(_ tool: CodingToolHook) {
+        do {
+            try TokenHookInstaller.install(tool)
+            refresh()
+        } catch {
+            hookRows.first { $0.tool == tool }?.showError(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Helper Views
+
+/// Scrim for a settings section that is not ready to be used yet. Sitting on top
+/// of the section is what makes it work twice over: it dims the controls and, as
+/// the frontmost view in that area, it takes the clicks and scrolls that would
+/// otherwise reach them.
+private final class DevelopmentOverlayView: NSView {
+    private let badgeBackground = NSView()
+    private let badgeLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let detailKey: L10nKey
+
+    init(detail: L10nKey) {
+        detailKey = detail
+        super.init(frame: .zero)
+        setup()
+        refresh()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func refresh() {
+        badgeLabel.stringValue = L10n.text(.inDevelopment)
+        detailLabel.stringValue = L10n.text(detailKey)
+    }
+
+    private func setup() {
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.68).cgColor
+        layer?.cornerRadius = 8
+
+        badgeBackground.wantsLayer = true
+        badgeBackground.translatesAutoresizingMaskIntoConstraints = false
+        badgeBackground.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.16).cgColor
+        badgeBackground.layer?.borderColor = NSColor.systemOrange.cgColor
+        badgeBackground.layer?.borderWidth = 1
+        badgeBackground.layer?.cornerRadius = 13
+        addSubview(badgeBackground)
+
+        badgeLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        badgeLabel.textColor = .systemOrange
+        badgeLabel.alignment = .center
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeBackground.addSubview(badgeLabel)
+
+        detailLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        detailLabel.textColor = NSColor.white.withAlphaComponent(0.7)
+        detailLabel.alignment = .center
+        detailLabel.lineBreakMode = .byWordWrapping
+        detailLabel.maximumNumberOfLines = 2
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // Badge and caption move as one block so they stay inside the scrim no
+        // matter how short the section is - the equipment slots are under 100pt.
+        let contentStack = NSStackView(views: [badgeBackground, detailLabel])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .centerX
+        contentStack.spacing = 10
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentStack)
+
+        let centered = contentStack.centerYAnchor.constraint(equalTo: centerYAnchor)
+        // Centering reads best on a short section, but the skill tree is 500pt
+        // tall - a block at its middle only shows up after a long scroll, so it
+        // gives way to the cap near the top.
+        centered.priority = .defaultLow
+
+        NSLayoutConstraint.activate([
+            contentStack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            centered,
+            contentStack.topAnchor.constraint(lessThanOrEqualTo: topAnchor, constant: 84),
+            contentStack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 8),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+
+            badgeBackground.heightAnchor.constraint(equalToConstant: 26),
+            badgeLabel.leadingAnchor.constraint(equalTo: badgeBackground.leadingAnchor, constant: 14),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeBackground.trailingAnchor, constant: -14),
+            badgeLabel.centerYAnchor.constraint(equalTo: badgeBackground.centerYAnchor),
+            detailLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -32)
+        ])
     }
 }
 
@@ -480,24 +869,30 @@ private final class TokenHookRowView: NSView {
         refresh()
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
     func refresh() {
         let state = TokenHookInstaller.state(for: tool)
         nameLabel.stringValue = tool.displayName
         detailLabel.stringValue = state.detail
-        statusLabel.stringValue = state.isInstalled ? L10n.text(.hookInstalled) : ""
+        setInstalledMarker(state.isInstalled)
         installButton.title = state.isInstalled ? L10n.text(.hookInstalled) : L10n.text(.installHook)
         installButton.isEnabled = !state.isInstalled
     }
 
     func showError(_ message: String) {
         detailLabel.stringValue = L10n.string(.hookInstallFailed, message)
-        statusLabel.stringValue = ""
+        setInstalledMarker(false)
         installButton.title = L10n.text(.installHook)
         installButton.isEnabled = true
+    }
+
+    /// The button title already spells out "Installed", so the row only needs a
+    /// glance marker beside it - a second green "Installed" label was wide
+    /// enough to be drawn on top of the detail text.
+    private func setInstalledMarker(_ isInstalled: Bool) {
+        statusLabel.stringValue = isInstalled ? "✓" : ""
+        statusLabel.toolTip = isInstalled ? L10n.text(.hookInstalled) : nil
     }
 
     private func setup() {
@@ -511,13 +906,16 @@ private final class TokenHookRowView: NSView {
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byWordWrapping
         detailLabel.maximumNumberOfLines = 2
-        statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         statusLabel.textColor = NSColor.systemGreen
-        statusLabel.alignment = .right
+        statusLabel.alignment = .center
 
         installButton.bezelStyle = .rounded
         installButton.target = self
         installButton.action = #selector(install)
+        // Without this the row's spare width lands in the button, stretching a
+        // one-word title across half the card.
+        installButton.setContentHuggingPriority(.required, for: .horizontal)
 
         [nameLabel, detailLabel, statusLabel, installButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
@@ -525,21 +923,26 @@ private final class TokenHookRowView: NSView {
         }
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 68),
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: installButton.leadingAnchor, constant: -12),
-            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
-            detailLabel.trailingAnchor.constraint(equalTo: installButton.leadingAnchor, constant: -12),
-            detailLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -10),
+            // Fits one detail line snugly and grows when the text wraps.
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
+
+            // Right column: install button with the status marker next to it.
             installButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             installButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             installButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 92),
-            statusLabel.trailingAnchor.constraint(equalTo: installButton.leadingAnchor, constant: -10),
+            statusLabel.trailingAnchor.constraint(equalTo: installButton.leadingAnchor, constant: -8),
             statusLabel.centerYAnchor.constraint(equalTo: installButton.centerYAnchor),
-            statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 420)
+            statusLabel.widthAnchor.constraint(equalToConstant: 16),
+
+            // Text column ends before the marker instead of running under it.
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusLabel.leadingAnchor, constant: -12),
+            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+            detailLabel.trailingAnchor.constraint(equalTo: statusLabel.leadingAnchor, constant: -12),
+            detailLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -10)
         ])
     }
 
@@ -548,371 +951,56 @@ private final class TokenHookRowView: NSView {
     }
 }
 
-private final class SkillRowView: NSView {
-    let skill: HeroSkill
-    var onUpgrade: ((HeroSkill) -> Void)?
-    var onAutoCastChanged: ((HeroSkill, Bool) -> Void)?
+private final class EquipmentRowView: NSView {
+    let slot: EquipmentSlot
 
+    private let slotLabel = NSTextField(labelWithString: "")
     private let nameLabel = NSTextField(labelWithString: "")
-    private let rankLabel = NSTextField(labelWithString: "")
-    private let tierLabel = NSTextField(labelWithString: "")
-    private let summaryLabel = NSTextField(labelWithString: "")
-    private let requirementLabel = NSTextField(labelWithString: "")
-    private let effectLabel = NSTextField(labelWithString: "")
-    private let previewView: SkillPreviewView
-    private let upgradeButton = NSButton(title: "", target: nil, action: nil)
-    private let autoCastCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let bonusLabel = NSTextField(labelWithString: "")
 
-    init(skill: HeroSkill) {
-        self.skill = skill
-        self.previewView = SkillPreviewView(skill: skill)
+    init(slot: EquipmentSlot) {
+        self.slot = slot
         super.init(frame: .zero)
         setup()
+        refresh()
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
-    func refresh(heroLevel: Int) {
-        let rank = SkillProgress.rank(for: skill)
-        nameLabel.stringValue = skill.name
-        rankLabel.stringValue = heroLevel >= skill.unlockLevel ? skill.rankText(rank) : skill.lockedText
-        tierLabel.stringValue = L10n.string(.tier, skill.treeTier)
-        summaryLabel.stringValue = skill.summary
-        requirementLabel.stringValue = L10n.string(.requiresPrefix, skill.requirementText)
-        effectLabel.stringValue = L10n.string(.effectPrefix, skill.effectText)
-        previewView.rank = rank
-        previewView.isLocked = heroLevel < skill.unlockLevel || rank <= 0
-        autoCastCheckbox.title = L10n.text(.autoCast)
-        autoCastCheckbox.isEnabled = rank > 0
-        autoCastCheckbox.state = SkillProgress.isAutoCastEnabled(skill) ? .on : .off
-
-        let canUpgrade = SkillProgress.canUpgrade(skill, heroLevel: heroLevel)
-        upgradeButton.isEnabled = canUpgrade
-        if let missing = SkillProgress.missingRequirementText(for: skill, heroLevel: heroLevel) {
-            upgradeButton.title = missing == skill.lockedText ? L10n.text(.locked) : L10n.text(.requiresButton)
-        } else if rank <= 0 {
-            upgradeButton.title = L10n.text(.unlock)
-        } else if rank >= skill.maxRank {
-            upgradeButton.title = L10n.text(.maxed)
+    func refresh() {
+        slotLabel.stringValue = slot.name
+        if let equipped = ItemSystem.equippedDrop(for: slot) {
+            nameLabel.stringValue = equipped.displayName
+            nameLabel.textColor = equipped.rarity.color
+            bonusLabel.stringValue = slot.bonusText(for: equipped.rarity)
         } else {
-            upgradeButton.title = L10n.text(.upgrade)
+            nameLabel.stringValue = "—"
+            nameLabel.textColor = .secondaryLabelColor
+            bonusLabel.stringValue = ""
         }
     }
 
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        rankLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        rankLabel.textColor = .secondaryLabelColor
-        tierLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-        tierLabel.textColor = NSColor.controlAccentColor
-        [summaryLabel, requirementLabel, effectLabel].forEach {
-            $0.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-            $0.textColor = .secondaryLabelColor
-            $0.lineBreakMode = .byWordWrapping
-            $0.maximumNumberOfLines = 2
-        }
+        slotLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        bonusLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        bonusLabel.textColor = .secondaryLabelColor
 
-        upgradeButton.target = self
-        upgradeButton.action = #selector(upgrade)
-        upgradeButton.bezelStyle = .rounded
-        upgradeButton.translatesAutoresizingMaskIntoConstraints = false
-        upgradeButton.widthAnchor.constraint(equalToConstant: 86).isActive = true
-        autoCastCheckbox.target = self
-        autoCastCheckbox.action = #selector(autoCastChanged)
-        autoCastCheckbox.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        autoCastCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        autoCastCheckbox.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        previewView.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleStack = NSStackView(views: [nameLabel, rankLabel, tierLabel])
-        titleStack.orientation = .horizontal
-        titleStack.alignment = .firstBaseline
-        titleStack.spacing = 8
-
-        let textStack = NSStackView(views: [titleStack, summaryLabel, requirementLabel, effectLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 3
-
-        let actionStack = NSStackView(views: [previewView, autoCastCheckbox, upgradeButton])
-        actionStack.orientation = .vertical
-        actionStack.alignment = .trailing
-        actionStack.spacing = 5
-
-        let rowStack = NSStackView(views: [textStack, actionStack])
-        rowStack.orientation = .horizontal
-        rowStack.alignment = .centerY
-        rowStack.spacing = 14
-        rowStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rowStack)
+        let textStack = NSStackView(views: [slotLabel, nameLabel, bonusLabel])
+        textStack.orientation = .horizontal
+        textStack.alignment = .firstBaseline
+        textStack.spacing = 12
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(textStack)
 
         NSLayoutConstraint.activate([
-            rowStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rowStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rowStack.topAnchor.constraint(equalTo: topAnchor),
-            rowStack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            previewView.widthAnchor.constraint(equalToConstant: 58),
-            previewView.heightAnchor.constraint(equalToConstant: 42),
-            summaryLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 330),
-            requirementLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 330),
-            effectLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 330)
+            textStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            textStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
         ])
-    }
-
-    @objc private func upgrade() {
-        onUpgrade?(skill)
-    }
-
-    @objc private func autoCastChanged() {
-        onAutoCastChanged?(skill, autoCastCheckbox.state == .on)
-    }
-}
-
-private final class SkillPreviewView: NSView {
-    let skill: HeroSkill
-
-    var rank: Int = 0 {
-        didSet { needsDisplay = true }
-    }
-
-    var isLocked: Bool = true {
-        didSet { needsDisplay = true }
-    }
-
-    init(skill: HeroSkill) {
-        self.skill = skill
-        super.init(frame: .zero)
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override var isFlipped: Bool {
-        true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 1, dy: 1)
-        let activeRank = max(1, rank)
-        let color = previewColor.withAlphaComponent(isLocked ? 0.36 : 1.0)
-
-        NSColor.controlBackgroundColor.withAlphaComponent(0.72).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
-        NSColor.separatorColor.withAlphaComponent(isLocked ? 0.22 : 0.55).setStroke()
-        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).stroke()
-
-        switch skill {
-        case .pulseBlade:
-            drawPulseBlade(color: color, rank: activeRank)
-        case .tokenVolley:
-            drawTokenVolley(color: color, rank: activeRank)
-        case .arcBurst:
-            drawArcBurst(color: color, rank: activeRank)
-        case .wraithMark:
-            drawWraithMark(color: color, rank: activeRank)
-        case .novaStorm:
-            drawNovaStorm(color: color, rank: activeRank)
-        case .overclockCore:
-            drawOverclockCore(color: color, rank: activeRank)
-        }
-    }
-
-    private var previewColor: NSColor {
-        switch skill {
-        case .pulseBlade:
-            NSColor(red: 1.0, green: 0.86, blue: 0.28, alpha: 1)
-        case .tokenVolley:
-            NSColor(red: 0.0, green: 0.90, blue: 0.82, alpha: 1)
-        case .arcBurst:
-            NSColor(red: 0.48, green: 0.74, blue: 1.0, alpha: 1)
-        case .wraithMark:
-            NSColor(red: 1.0, green: 0.42, blue: 0.52, alpha: 1)
-        case .novaStorm:
-            NSColor(red: 0.78, green: 0.52, blue: 1.0, alpha: 1)
-        case .overclockCore:
-            NSColor(red: 0.28, green: 1.0, blue: 0.52, alpha: 1)
-        }
-    }
-
-    private func drawPulseBlade(color: NSColor, rank: Int) {
-        color.setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = CGFloat(2 + rank)
-        path.lineCapStyle = .round
-        path.move(to: NSPoint(x: 16, y: 31))
-        path.curve(
-            to: NSPoint(x: 42, y: 10),
-            controlPoint1: NSPoint(x: 23, y: 22),
-            controlPoint2: NSPoint(x: 35, y: 17)
-        )
-        path.stroke()
-    }
-
-    private func drawTokenVolley(color: NSColor, rank: Int) {
-        for index in 0..<(rank + 1) {
-            let y = CGFloat(14 + index * 7)
-            color.setFill()
-            NSBezierPath(roundedRect: NSRect(x: 15 + CGFloat(index * 2), y: y, width: 22, height: 5), xRadius: 2, yRadius: 2).fill()
-            color.withAlphaComponent(0.30).setFill()
-            NSBezierPath(rect: NSRect(x: 9, y: y + 1, width: 8, height: 3)).fill()
-        }
-    }
-
-    private func drawArcBurst(color: NSColor, rank: Int) {
-        color.setStroke()
-        for index in 0..<rank {
-            let path = NSBezierPath()
-            path.lineWidth = 1.8
-            let offset = CGFloat(index * 5)
-            path.move(to: NSPoint(x: 12, y: 17 + offset))
-            path.curve(
-                to: NSPoint(x: 45, y: 15 + offset),
-                controlPoint1: NSPoint(x: 20, y: 6 + offset),
-                controlPoint2: NSPoint(x: 34, y: 29 - offset)
-            )
-            path.stroke()
-        }
-    }
-
-    private func drawWraithMark(color: NSColor, rank: Int) {
-        color.setStroke()
-        let radius = CGFloat(8 + rank * 2)
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-        let path = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-        path.lineWidth = 1.6
-        path.stroke()
-        let cross = NSBezierPath()
-        cross.lineWidth = 1.4
-        cross.move(to: NSPoint(x: center.x - radius * 0.6, y: center.y))
-        cross.line(to: NSPoint(x: center.x + radius * 0.6, y: center.y))
-        cross.move(to: NSPoint(x: center.x, y: center.y - radius * 0.6))
-        cross.line(to: NSPoint(x: center.x, y: center.y + radius * 0.6))
-        cross.stroke()
-    }
-
-    private func drawNovaStorm(color: NSColor, rank: Int) {
-        color.setStroke()
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-        for index in 0..<rank {
-            let radius = CGFloat(9 + index * 5)
-            let path = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-            path.lineWidth = 1.5
-            path.stroke()
-        }
-        drawSpark(center: center, color: color)
-    }
-
-    private func drawOverclockCore(color: NSColor, rank: Int) {
-        color.setStroke()
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-        let core = NSBezierPath(ovalIn: NSRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14))
-        core.lineWidth = 2
-        core.stroke()
-        for index in 0..<(4 + rank * 2) {
-            let angle = CGFloat(index) / CGFloat(4 + rank * 2) * CGFloat.pi * 2
-            let start = NSPoint(x: center.x + cos(angle) * 12, y: center.y + sin(angle) * 12)
-            let end = NSPoint(x: center.x + cos(angle) * 18, y: center.y + sin(angle) * 18)
-            let path = NSBezierPath()
-            path.lineWidth = 1.4
-            path.move(to: start)
-            path.line(to: end)
-            path.stroke()
-        }
-    }
-
-    private func drawSpark(center: NSPoint, color: NSColor) {
-        let path = NSBezierPath()
-        path.lineWidth = 1.3
-        path.move(to: NSPoint(x: center.x - 14, y: center.y))
-        path.line(to: NSPoint(x: center.x + 14, y: center.y))
-        path.move(to: NSPoint(x: center.x, y: center.y - 14))
-        path.line(to: NSPoint(x: center.x, y: center.y + 14))
-        color.setStroke()
-        path.stroke()
-    }
-}
-
-private final class BackdropChoiceView: NSView {
-    let backdrop: BattleBackdrop
-    var onSelected: ((BattleBackdrop) -> Void)?
-
-    private let previewView = BackdropView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let clickButton = NSButton(title: "", target: nil, action: nil)
-
-    init(backdrop: BattleBackdrop) {
-        self.backdrop = backdrop
-        super.init(frame: .zero)
-        setup()
-        previewView.backdrop = backdrop
-        nameLabel.stringValue = backdrop.name
-        refreshSelection()
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    func refreshSelection() {
-        nameLabel.stringValue = backdrop.name
-        let isSelected = BattleBackdrop.load() == backdrop
-        layer?.borderColor = isSelected
-            ? NSColor.controlAccentColor.cgColor
-            : NSColor.separatorColor.withAlphaComponent(0.55).cgColor
-        layer?.borderWidth = isSelected ? 2 : 1
-        layer?.backgroundColor = isSelected
-            ? NSColor.controlAccentColor.withAlphaComponent(0.13).cgColor
-            : NSColor.controlBackgroundColor.withAlphaComponent(0.65).cgColor
-    }
-
-    private func setup() {
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.masksToBounds = true
-
-        previewView.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        clickButton.translatesAutoresizingMaskIntoConstraints = false
-
-        nameLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        nameLabel.alignment = .center
-        nameLabel.lineBreakMode = .byTruncatingTail
-
-        clickButton.isBordered = false
-        clickButton.target = self
-        clickButton.action = #selector(selectBackdrop)
-
-        addSubview(previewView)
-        addSubview(nameLabel)
-        addSubview(clickButton)
-
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 104),
-            heightAnchor.constraint(equalToConstant: 72),
-            previewView.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-            previewView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            previewView.widthAnchor.constraint(equalToConstant: 90),
-            previewView.heightAnchor.constraint(equalToConstant: 38),
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            nameLabel.topAnchor.constraint(equalTo: previewView.bottomAnchor, constant: 4),
-            nameLabel.heightAnchor.constraint(equalToConstant: 14),
-            clickButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-            clickButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-            clickButton.topAnchor.constraint(equalTo: topAnchor),
-            clickButton.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-
-    @objc private func selectBackdrop() {
-        onSelected?(backdrop)
     }
 }
 
@@ -932,9 +1020,7 @@ private final class RoleChoiceView: NSView {
         refresh(selectedRole: HeroRole.load())
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
     func refresh(selectedRole: HeroRole) {
         actorView.heroRole = role
@@ -1007,64 +1093,170 @@ private final class RoleChoiceView: NSView {
     }
 }
 
-private final class EquipmentRowView: NSView {
-    let slot: EquipmentSlot
+private final class BackdropChoiceView: NSView {
+    let backdrop: BattleBackdrop
+    var onSelected: ((BattleBackdrop) -> Void)?
 
-    private let slotLabel = NSTextField(labelWithString: "")
+    private let previewView = BackdropView()
     private let nameLabel = NSTextField(labelWithString: "")
-    private let bonusLabel = NSTextField(labelWithString: "")
+    private let clickButton = NSButton(title: "", target: nil, action: nil)
 
-    init(slot: EquipmentSlot) {
-        self.slot = slot
+    init(backdrop: BattleBackdrop) {
+        self.backdrop = backdrop
         super.init(frame: .zero)
         setup()
-        refresh()
+        previewView.backdrop = backdrop
+        nameLabel.stringValue = backdrop.name
+        refreshSelection()
     }
 
-    required init?(coder: NSCoder) {
-        nil
-    }
+    required init?(coder: NSCoder) { nil }
 
-    func refresh() {
-        slotLabel.stringValue = slot.name
-        if let equipped = ItemSystem.equippedDrop(for: slot) {
-            nameLabel.stringValue = equipped.displayName
-            nameLabel.textColor = equipped.rarity.color
-            bonusLabel.stringValue = slot.bonusText(for: equipped.rarity)
-        } else {
-            nameLabel.stringValue = "—"
-            nameLabel.textColor = .secondaryLabelColor
-            bonusLabel.stringValue = ""
-        }
+    func refreshSelection() {
+        nameLabel.stringValue = backdrop.name
+        let isSelected = BattleBackdrop.load() == backdrop
+        layer?.borderColor = isSelected
+            ? NSColor.controlAccentColor.cgColor
+            : NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        layer?.borderWidth = isSelected ? 2 : 1
+        layer?.backgroundColor = isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.13).cgColor
+            : NSColor.controlBackgroundColor.withAlphaComponent(0.65).cgColor
     }
 
     private func setup() {
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        layer?.cornerRadius = 8
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
 
-        slotLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        bonusLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        bonusLabel.textColor = .secondaryLabelColor
-        bonusLabel.alignment = .right
+        previewView.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        clickButton.translatesAutoresizingMaskIntoConstraints = false
 
-        [slotLabel, nameLabel, bonusLabel].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            addSubview($0)
-        }
+        nameLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        nameLabel.alignment = .center
+        nameLabel.lineBreakMode = .byTruncatingTail
+
+        clickButton.isBordered = false
+        clickButton.target = self
+        clickButton.action = #selector(selectBackdrop)
+
+        addSubview(previewView)
+        addSubview(nameLabel)
+        addSubview(clickButton)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            slotLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            slotLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            slotLabel.widthAnchor.constraint(equalToConstant: 76),
-            nameLabel.leadingAnchor.constraint(equalTo: slotLabel.trailingAnchor, constant: 10),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            bonusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 10),
-            bonusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            bonusLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+            widthAnchor.constraint(equalToConstant: 104),
+            heightAnchor.constraint(equalToConstant: 72),
+            previewView.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            previewView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            previewView.widthAnchor.constraint(equalToConstant: 90),
+            previewView.heightAnchor.constraint(equalToConstant: 38),
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            nameLabel.topAnchor.constraint(equalTo: previewView.bottomAnchor, constant: 4),
+            nameLabel.heightAnchor.constraint(equalToConstant: 14),
+            clickButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            clickButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            clickButton.topAnchor.constraint(equalTo: topAnchor),
+            clickButton.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
+    }
+
+    @objc private func selectBackdrop() {
+        onSelected?(backdrop)
+    }
+}
+
+// MARK: - Sessions Settings Tab
+
+final class SessionsSettingsTab: NSViewController {
+    private let scrollView = NSScrollView()
+    private let contentView = NSView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let sessionListView = SessionListView()
+    private var refreshTimer: Timer?
+
+    override func loadView() {
+        view = NSView()
+        view.wantsLayer = true
+        setupUI()
+        startMonitoring()
+    }
+
+    private func setupUI() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = contentView
+        view.addSubview(scrollView)
+
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(titleLabel)
+
+        sessionListView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(sessionListView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            contentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            // The clip view is not flipped, so a document view shorter than the
+            // viewport sits at its bottom edge - that is what left a screen of
+            // blank space above the list. Filling the viewport pins it to the top,
+            // and taller content still scrolls.
+            contentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+
+            sessionListView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            sessionListView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            sessionListView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            contentView.bottomAnchor.constraint(greaterThanOrEqualTo: sessionListView.bottomAnchor, constant: 16)
+        ])
+
+        refresh()
+    }
+
+    private func startMonitoring() {
+        SessionMonitor.shared.addObserver(self) { [weak self] sessions in
+            Task { @MainActor in
+                self?.sessionListView.updateSessions(sessions)
+            }
+        }
+        SessionMonitor.shared.startMonitoring()
+
+        // Refresh every 10 seconds (reduced frequency to prevent UI lag)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+            Task { @MainActor in
+                SessionMonitor.shared.refreshIfNeeded()
+            }
+        }
+    }
+
+    func refresh() {
+        titleLabel.stringValue = L10n.text(.activeSessions)
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 }

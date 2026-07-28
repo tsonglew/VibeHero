@@ -46,6 +46,9 @@ final class NotchWindow: NSPanel {
         notchView.onSettingsRequested = { [weak self] in
             self?.showSettings()
         }
+        notchView.onExpandedHeightChanged = { [weak self] in
+            self?.refreshExpandedSize()
+        }
         contentView = notchView
 
         fullScreenMonitor.onChange = { [weak self] _ in
@@ -203,7 +206,29 @@ final class NotchWindow: NSPanel {
     }
 
     private func currentStyles() -> (collapsed: NotchStyle, expanded: NotchStyle) {
-        NotchStyle.styles(for: ScreenPinning.preferredScreen())
+        NotchStyle.styles(
+            for: ScreenPinning.preferredScreen(),
+            expandedNotchHeight: notchView.preferredExpandedNotchHeight
+        )
+    }
+
+    /// The expanded panel grows to fit the session list, so its size can change
+    /// while it is already on screen - switching to the list, or a scan that
+    /// found more sessions.
+    private func refreshExpandedSize() {
+        let styles = currentStyles()
+        notchView.updateStyles(collapsed: styles.collapsed, expanded: styles.expanded, animated: false)
+
+        guard isExpanded else { return }
+
+        let targetFrame = frameForPreferredScreen(size: styles.expanded.windowSize)
+        guard targetFrame != frame else { return }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            animator().setFrame(targetFrame, display: true)
+        }
     }
 
     private func frameForPreferredScreen(size: NSSize) -> NSRect {

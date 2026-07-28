@@ -303,8 +303,41 @@ final class BackdropView: NSView {
     }
 
     private func applyScrollingState() {
-        let speed: Float = scrollingEnabled ? 1 : 0
-        scrollLayers.forEach { $0.speed = speed }
+        for tile in scrollLayers {
+            if scrollingEnabled {
+                resumeScroll(tile)
+            } else {
+                pauseScroll(tile)
+            }
+        }
+    }
+
+    /// Freeze a parallax tile on the frame that is currently on screen.
+    ///
+    /// `speed = 0` alone is not a pause: it drops the layer's local time to
+    /// `timeOffset`, which is 0, so the scroll animation snaps back to the start
+    /// of its period. Parking the current local time in `timeOffset` first keeps
+    /// the tile exactly where it is.
+    private func pauseScroll(_ tile: CALayer) {
+        guard tile.speed != 0 else { return }
+        let paused = tile.convertTime(CACurrentMediaTime(), from: nil)
+        tile.speed = 0
+        tile.timeOffset = paused
+    }
+
+    /// Restart a frozen tile from the frame it was frozen on.
+    ///
+    /// Without rebasing `beginTime`, the tile jumps to wherever the scroll would
+    /// have reached had it never stopped — up to a full parallax period (over
+    /// 200pt for the far layers) of instant sideways motion. The hero is drawn
+    /// at a fixed spot, so that jump reads as the hero teleporting.
+    private func resumeScroll(_ tile: CALayer) {
+        guard tile.speed == 0 else { return }
+        let paused = tile.timeOffset
+        tile.speed = 1
+        tile.timeOffset = 0
+        tile.beginTime = 0
+        tile.beginTime = tile.convertTime(CACurrentMediaTime(), from: nil) - paused
     }
 
     private func renderTile(width: CGFloat, height: CGFloat, spec: ScrollSpec) -> CGImage? {
@@ -724,10 +757,6 @@ final class PixelActorView: NSView {
         didSet { needsDisplay = true }
     }
 
-    var poseOffset: CGFloat = 0 {
-        didSet { needsDisplay = true }
-    }
-
     var isDefeated: Bool = false {
         didSet {
             setTokenActivity(false)
@@ -797,6 +826,34 @@ final class PixelActorView: NSView {
         layer?.add(bob, forKey: "walkBob")
     }
 
+    /// One-shot "this actor just swung" tell: a short wind-up, a lunge along
+    /// `direction` (+1 faces right, -1 faces left), then a settle back.
+    ///
+    /// It runs purely on the actor's own layer, so a swing costs two keyframe
+    /// animations and no drawing. Nudging the sprite's own draw offset instead
+    /// would repaint all of it twice per swing, and sustained fire swings a
+    /// couple of times a second.
+    func playAttackTell(direction: CGFloat, reach: CGFloat = 7) {
+        guard !isDefeated, let layer else {
+            return
+        }
+
+        let lunge = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        lunge.values = [0, -reach * 0.3, reach, reach * 0.3, 0]
+        lunge.keyTimes = [0, 0.16, 0.4, 0.68, 1]
+        lunge.duration = 0.26
+        lunge.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(lunge, forKey: "attackLunge")
+
+        // The tilt is what makes it read as a strike instead of a slide.
+        let swing = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        swing.values = [0, 0.11 * direction, -0.15 * direction, 0]
+        swing.keyTimes = [0, 0.16, 0.42, 1]
+        swing.duration = 0.26
+        swing.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(swing, forKey: "attackSwing")
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         switch kind {
         case .hero:
@@ -813,7 +870,7 @@ final class PixelActorView: NSView {
         }
 
         let unit = min(bounds.width, bounds.height) / 16
-        let x = (bounds.width - unit * 16) / 2 + poseOffset
+        let x = (bounds.width - unit * 16) / 2
         let y = (bounds.height - unit * 16) / 2
         let palette = heroRole.palette
 
@@ -832,7 +889,7 @@ final class PixelActorView: NSView {
 
     private func drawSoulHero() {
         let unit = min(bounds.width, bounds.height) / 16
-        let x = (bounds.width - unit * 16) / 2 + poseOffset
+        let x = (bounds.width - unit * 16) / 2
         let y = (bounds.height - unit * 16) / 2
         let body = NSColor(red: 0.78, green: 0.95, blue: 1.0, alpha: 0.72)
         let glow = NSColor(red: 0.42, green: 0.86, blue: 1.0, alpha: 0.42)
@@ -913,7 +970,7 @@ final class PixelActorView: NSView {
     private func drawMonster() {
         let bossScale: CGFloat = isBoss ? 1.22 : 1
         let unit = min(bounds.width, bounds.height) / 16 * bossScale
-        let x = (bounds.width - unit * 16) / 2 + poseOffset
+        let x = (bounds.width - unit * 16) / 2
         let y = (bounds.height - unit * 16) / 2
 
         switch monsterKind {
@@ -1020,7 +1077,7 @@ private struct MonsterInstance {
     let maxHP: CGFloat
     var currentHP: CGFloat
     var worldX: CGFloat  // Fixed position in the scrolling world
-    
+
     init(kind: MonsterKind, isBoss: Bool, maxHP: Int, worldX: CGFloat) {
         self.kind = kind
         self.isBoss = isBoss
@@ -1028,13 +1085,38 @@ private struct MonsterInstance {
         self.currentHP = self.maxHP
         self.worldX = worldX
     }
-    
+
     var healthFraction: CGFloat {
         currentHP / maxHP
     }
 }
 
+/// Layer-hosting container for the battle scene's combat effects. It draws
+/// nothing itself and never takes part in hit testing.
+private final class EffectOverlayView: NSView {
+    init() {
+        super.init(frame: .zero)
+        layer = CALayer()
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 final class BattleSceneView: NSView {
+    /// Every CALayer effect is hosted here rather than on the scene's own layer.
+    /// AppKit keeps subview backing layers at the end of the sublayer array, so
+    /// anything added with `layer?.addSublayer` ends up *below* the opaque
+    /// backdrop subview - which is why no slash, projectile or impact was ever
+    /// visible. This overlay is the last subview, so effects land on top.
+    private let effectsHost = EffectOverlayView()
+    private var effectsLayer: CALayer? { effectsHost.layer }
     private let heroView = PixelActorView(kind: .hero)
     private let monsterView = PixelActorView(kind: .monster)
     private let backdropView = BackdropView()
@@ -1053,11 +1135,18 @@ final class BattleSceneView: NSView {
     private let novaLayer = CAShapeLayer()
     private let flashLayer = CALayer()
     private let monsterHitFlashLayer = CALayer()
+    // Attack tells: one reused arc per side, plus the monster's claw marks and
+    // the flash that lands on the hero. Created once so a swing never touches
+    // the layer tree - all of these stay hidden in their model state and are
+    // only visible for the length of their animation.
+    private let heroSwingLayer = CAShapeLayer()
+    private let monsterSwingLayer = CAShapeLayer()
+    private let monsterClawLayers = (0..<3).map { _ in CAShapeLayer() }
+    private let heroImpactLayer = CAShapeLayer()
     private let pooledProjectileLayers = (0..<8).map { _ in CAShapeLayer() }
     private let pooledImpactLayers = (0..<4).map { _ in CAShapeLayer() }
     private let floatingTextLabels = (0..<6).map { _ in NSTextField(labelWithString: "") }
     private let monsterOverheadHPBar = PixelBarView()
-    private let groundLayer = CALayer()
     private var tokenAttackTimer: Timer?
     private var lastRingEffectAt: CFTimeInterval = 0
     private var projectilePoolIndex = 0
@@ -1067,21 +1156,32 @@ final class BattleSceneView: NSView {
     private var layerGenerations: [ObjectIdentifier: Int] = [:]
     var onSustainedHit: ((CGFloat) -> Void)?
 
+    private var displayLink: CADisplayLink?
+    private var lastUpdateTime: CFTimeInterval = 0
+
     var rendersCombatEffects = false {
         didSet {
             guard rendersCombatEffects != oldValue else {
                 return
             }
             updateWorldMotion()
+            if rendersCombatEffects {
+                startGameLoop()
+            } else {
+                stopGameLoop()
+            }
         }
     }
 
-    // When true the monster is standing at its fight position: the world stops
-    // scrolling and the hero stands to fight. When false the world scrolls and
-    // the hero walks toward the next monster, which stands at a fixed spot in
-    // the world and slides into view with the ground.
-    private var monsterEngaged = true
+    // When true the monster is within attack range: the world stops scrolling,
+    // hero stands to fight, HP bar is visible, and attacks can be triggered.
+    // When false the world scrolls and hero walks toward the monster.
+    private(set) var monsterEngaged = false
     private var approachWorkItem: DispatchWorkItem?
+
+    // Attack range: monster must be within this distance from hero to engage
+    // This is measured from hero's right edge to monster's left edge
+    private let attackRange: CGFloat = 30
 
     private func updateWorldMotion() {
         let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
@@ -1094,7 +1194,7 @@ final class BattleSceneView: NSView {
         guard currentMonsterIndex >= 0, currentMonsterIndex < monsterQueue.count else { return nil }
         return monsterQueue[currentMonsterIndex]
     }
-    
+
     // The monster's on-screen frame, honoring an in-flight approach animation.
     private var monsterVisualFrame: CGRect {
         monsterView.layer?.presentation()?.frame ?? monsterView.frame
@@ -1132,7 +1232,6 @@ final class BattleSceneView: NSView {
                 return
             }
             backdropView.backdrop = backdrop
-            groundLayer.backgroundColor = backdrop.accentColor
         }
     }
 
@@ -1222,6 +1321,9 @@ final class BattleSceneView: NSView {
         super.layout()
 
         backdropView.frame = bounds
+        // Same coordinate space as the scene, so effect paths built from actor
+        // frames need no conversion.
+        effectsHost.frame = bounds
         let actorSize = actorSize
         heroView.frame = NSRect(
             x: max(16, bounds.width * 0.3),
@@ -1235,8 +1337,6 @@ final class BattleSceneView: NSView {
         if monsterView.frame.isEmpty {
             monsterView.frame = NSRect(x: monsterFightX, y: bounds.height - actorSize - 5, width: actorSize, height: actorSize)
         }
-        groundLayer.frame = NSRect(x: 12, y: bounds.height - 8, width: bounds.width - 24, height: 2)
-        
         // Update HP bar position based on current monster view position
         updateMonsterPosition()
     }
@@ -1266,7 +1366,7 @@ final class BattleSceneView: NSView {
                 height: CGFloat(4 + (index + 1) % 3)
             )
             shard.position = center
-            layer?.addSublayer(shard)
+            effectsLayer?.addSublayer(shard)
 
             let angle = CGFloat(index) / 8 * CGFloat.pi * 2
             let distance = CGFloat(18 + (index % 4) * 7)
@@ -1307,18 +1407,18 @@ final class BattleSceneView: NSView {
         monsterQueue.removeAll()
         // Note: worldOffset and heroWorldX are NOT reset - they continue advancing
         // This ensures hero's world position is always increasing
-        
+
         // Generate more monsters per batch for higher density
         let count = isBoss ? 1 : Int.random(in: 5...8)
         let baseMaxHP = StageProgress.maxHP(stage: stage, monster: kind, isBoss: isBoss)
-        
+
         // Space monsters closer together: each monster is ~120-180 units apart
         // This means monsters appear frequently as the hero walks
         var lastX = monsterFightX - 80 // Start first monster closer to hero
         for i in 0..<count {
             let spacing = CGFloat.random(in: 120...180)
             lastX += spacing
-            var monster = MonsterInstance(
+            let monster = MonsterInstance(
                 kind: kind,
                 isBoss: isBoss && i == 0, // Only first monster is boss in boss stages
                 maxHP: baseMaxHP,
@@ -1326,12 +1426,12 @@ final class BattleSceneView: NSView {
             )
             monsterQueue.append(monster)
         }
-        
+
         // Start with first monster
         currentMonsterIndex = 0
         setupCurrentMonster()
     }
-    
+
     // Setup the current monster view for the monster at currentMonsterIndex
     private func setupCurrentMonster() {
         guard let monster = currentMonster else {
@@ -1341,7 +1441,7 @@ final class BattleSceneView: NSView {
             updateWorldMotion()
             return
         }
-        
+
         monsterView.layer?.removeAllAnimations()
         monsterView.alphaValue = 1
         monsterView.needsDisplay = true
@@ -1349,34 +1449,30 @@ final class BattleSceneView: NSView {
         monsterView.isBoss = monster.isBoss
         monsterOverheadHPBar.fillColor = monster.kind.hpColor
         monsterEngaged = false
-        
+
         // Position monster based on its worldX relative to current worldOffset
         updateMonsterPosition()
         updateWorldMotion()
     }
-    
+
     // Update monster view position based on world scrolling
     private func updateMonsterPosition() {
         guard let monster = currentMonster else { return }
-        
+
         let fightFrame = NSRect(
             x: monsterFightX,
             y: monsterView.frame.minY,
             width: monsterView.frame.width,
             height: monsterView.frame.height
         )
-        
+
         // Monster's screen X = worldX - worldOffset
         let screenX = monster.worldX - worldOffset
-        
+
+        // Update monster view position (visual position on screen)
         if screenX <= monsterFightX {
             // Monster has reached fight position
             monsterView.frame = fightFrame
-            if !monsterEngaged {
-                monsterEngaged = true
-                updateWorldMotion()
-                playMonsterArrivalEffects()
-            }
         } else {
             // Monster is still approaching from the right
             monsterView.frame = NSRect(
@@ -1385,10 +1481,30 @@ final class BattleSceneView: NSView {
                 width: fightFrame.width,
                 height: fightFrame.height
             )
+        }
+
+        // Attack range check: calculate distance from hero's attack point to monster's edge
+        // Use hero's attack point (slightly in front of hero) for more intuitive range
+        let heroAttackPointX = heroView.frame.maxX
+        let monsterEdgeX = monsterView.frame.minX
+        let distanceToHero = abs(monsterEdgeX - heroAttackPointX)
+
+        if distanceToHero <= attackRange {
+            // Monster is within attack range - engage!
+            if !monsterEngaged {
+                monsterEngaged = true
+                updateWorldMotion()
+                playMonsterArrivalEffects()
+            }
+        } else {
+            // Monster is out of attack range - disengage
             monsterEngaged = false
             updateWorldMotion()
         }
-        
+
+        // Show HP bar only when engaged (within attack range)
+        monsterOverheadHPBar.isHidden = !monsterEngaged
+
         // Update HP bar position
         let barFrame = NSRect(
             x: monsterView.frame.minX,
@@ -1399,39 +1515,39 @@ final class BattleSceneView: NSView {
         monsterOverheadHPBar.frame = barFrame
         monsterOverheadHPBar.value = monster.healthFraction
     }
-    
+
     // Play effects when monster arrives at fight position
     private func playMonsterArrivalEffects() {
         guard let monster = currentMonster else { return }
-        
+
         playFlash(color: monster.kind.hpColor.withAlphaComponent(monster.isBoss ? 0.34 : 0.18))
         if monster.isBoss {
             shake(layer: monsterView.layer, distance: 5, duration: 0.3)
         }
-        
+
         let scale = CAKeyframeAnimation(keyPath: "transform.scale")
         scale.values = [0.15, 1.2, 0.92, 1.0]
         scale.keyTimes = [0, 0.48, 0.78, 1]
         scale.duration = monster.isBoss ? 0.5 : 0.36
         scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
         monsterView.layer?.add(scale, forKey: "monsterRespawnScale")
-        
+
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
         opacity.values = [0.0, 1.0, 0.65, 1.0]
         opacity.keyTimes = [0, 0.42, 0.70, 1]
         opacity.duration = monster.isBoss ? 0.5 : 0.36
         monsterView.layer?.add(opacity, forKey: "monsterRespawnOpacity")
     }
-    
+
     // Check if there are more monsters in the current batch
     func hasNextMonsterInBatch() -> Bool {
         return currentMonsterIndex + 1 < monsterQueue.count
     }
-    
+
     // Move to next monster in queue after defeating current
     func advanceToNextMonster() {
         currentMonsterIndex += 1
-        
+
         if currentMonsterIndex >= monsterQueue.count {
             // All monsters in batch defeated
             monsterView.alphaValue = 0
@@ -1442,11 +1558,32 @@ final class BattleSceneView: NSView {
             setupCurrentMonster()
         }
     }
-    
+
+    // MARK: - Game Loop
+
+    private func startGameLoop() {
+        guard displayLink == nil else { return }
+        displayLink = displayLink(target: self, selector: #selector(gameLoopTick))
+        displayLink?.add(to: .main, forMode: .common)
+        lastUpdateTime = CACurrentMediaTime()
+    }
+
+    private func stopGameLoop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func gameLoopTick() {
+        let now = CACurrentMediaTime()
+        let dt = now - lastUpdateTime
+        lastUpdateTime = now
+        updateWorld(dt: dt)
+    }
+
     // Called each frame/tick to update world scrolling and monster positions
     func updateWorld(dt: TimeInterval) {
         guard rendersCombatEffects else { return }
-        
+
         // If not engaged and hero is walking, scroll the world
         let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
         if moving {
@@ -1456,7 +1593,7 @@ final class BattleSceneView: NSView {
             updateMonsterPosition()
         }
     }
-    
+
     // Legacy method for compatibility - spawns a single monster batch
     func playMonsterRespawn() {
         // This is now handled by spawnMonsterBatch called from NotchContentView
@@ -1484,7 +1621,7 @@ final class BattleSceneView: NSView {
             itemLayer.shadowOpacity = 0
         }
         itemLayer.position = CGPoint(x: heroView.frame.midX, y: heroView.frame.midY)
-        layer?.addSublayer(itemLayer)
+        effectsLayer?.addSublayer(itemLayer)
 
         let start = CGPoint(x: monsterVisualFrame.midX, y: monsterVisualFrame.midY)
         let bounce = CGPoint(x: monsterVisualFrame.midX - 18, y: max(14, monsterVisualFrame.minY - 8))
@@ -1551,7 +1688,7 @@ final class BattleSceneView: NSView {
         rays.shadowOpacity = 0
         rays.path = path
         rays.opacity = 1
-        layer?.addSublayer(rays)
+        effectsLayer?.addSublayer(rays)
 
         let rise = CABasicAnimation(keyPath: "transform.translation.y")
         rise.fromValue = 7
@@ -1578,7 +1715,7 @@ final class BattleSceneView: NSView {
                 x: center.x + CGFloat(index - 2) * 8,
                 y: heroView.frame.maxY - 6
             )
-            layer?.addSublayer(shard)
+            effectsLayer?.addSublayer(shard)
 
             let float = CABasicAnimation(keyPath: "position.y")
             float.fromValue = shard.position.y
@@ -1642,56 +1779,88 @@ final class BattleSceneView: NSView {
         label.removeFromSuperview()
         addSubview(label)
 
+        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
         label.stringValue = text
         label.textColor = color
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+        label.font = font
 
-        let width: CGFloat = style == .banner ? 220 : 130
         let height: CGFloat = fontSize + 6
-        let centerX: CGFloat
-        let baseY: CGFloat
+        // Fit the label to its text. A fixed-width centered label would put the
+        // number back on the victim's chest no matter where we move the frame,
+        // and the damage has to read as "this actor lost that much HP".
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 6
+        let width = min(style == .banner ? 220 : textWidth, max(40, bounds.width - 4))
+        let rise: CGFloat = style == .crit ? 20 : style == .banner ? 12 : 15
+        let gap: CGFloat = 3
+
+        let originX: CGFloat
+        let originY: CGFloat
         switch anchor {
         case .monster:
-            centerX = monsterVisualFrame.midX
-            baseY = monsterVisualFrame.midY - height / 2
+            // Beside the monster, on its outer side so the number never hides
+            // under the impact art landing on the side facing the hero. If the
+            // monster is hugging the right edge, it goes on the near side.
+            let outer = monsterVisualFrame.maxX + gap
+            originX = outer + width <= bounds.width - 2 ? outer : monsterVisualFrame.minX - gap - width
+            originY = monsterVisualFrame.midY - height / 2 + 4
         case .hero:
-            centerX = heroView.frame.midX
-            baseY = heroView.frame.midY - height / 2
+            // Mirror image: the hero's own damage pops out to its left.
+            let outer = heroView.frame.minX - gap - width
+            originX = outer >= 2 ? outer : heroView.frame.maxX + gap
+            originY = heroView.frame.midY - height / 2 + 4
         case .center:
-            centerX = bounds.midX
-            baseY = bounds.midY - height / 2
+            originX = bounds.midX - width / 2
+            originY = bounds.midY - height / 2
         }
-        let jitter: CGFloat = style == .banner ? 0 : CGFloat.random(in: -8...8)
+
+        // Small jitter so two hits in a row don't stack into one blur, kept
+        // tight now that the label is glued to the actor's side.
+        let jitter: CGFloat = style == .banner ? 0 : CGFloat.random(in: -3...3)
         let startFrame = NSRect(
-            x: max(2, min(bounds.width - width - 2, centerX - width / 2 + jitter)),
-            y: baseY,
+            x: max(2, min(bounds.width - width - 2, originX)),
+            // Keep the whole rise inside the scene, or it fades out clipped.
+            y: max(1, min(bounds.height - height - rise - 1, originY + jitter)),
             width: width,
             height: height
         )
         label.frame = startFrame
-        label.alphaValue = 1
+        // The fade below runs as a layer keyframe, so the label's resting state
+        // is invisible and nothing has to clean it up afterwards.
+        label.alphaValue = 0
+
+        guard let textLayer = label.layer else {
+            return
+        }
 
         // Pop in from an oversize scale so hits feel punchy.
         let popScale: CGFloat = style == .crit ? 1.7 : style == .banner ? 1.0 : 1.35
-        if popScale > 1, let textLayer = label.layer {
-            textLayer.transform = CATransform3DMakeScale(popScale, popScale, 1)
+        if popScale > 1 {
             let pop = CABasicAnimation(keyPath: "transform")
             pop.fromValue = CATransform3DMakeScale(popScale, popScale, 1)
             pop.toValue = CATransform3DIdentity
             pop.duration = 0.16
             pop.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            textLayer.transform = CATransform3DIdentity
             textLayer.add(pop, forKey: "floatingTextPop")
         }
 
-        let rise: CGFloat = style == .crit ? 20 : style == .banner ? 12 : 15
         let duration: Double = style == .crit ? 0.95 : style == .banner ? 1.15 : 0.7
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            label.animator().alphaValue = 0
-            label.animator().frame = startFrame.offsetBy(dx: 0, dy: rise)
-        }
+
+        // Rise and fade on the layer rather than through `animator().frame`:
+        // resizing a text field re-renders its text on every frame of the
+        // animation, and a damage number goes up on every single hit.
+        let drift = CABasicAnimation(keyPath: "position.y")
+        drift.fromValue = textLayer.position.y
+        drift.toValue = textLayer.position.y + rise
+        drift.duration = duration
+        drift.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        textLayer.add(drift, forKey: "floatingTextRise")
+
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 1, 0]
+        fade.keyTimes = [0, 0.45, 1]
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        textLayer.add(fade, forKey: "floatingTextFade")
     }
 
     func playCombo(_ count: Int) {
@@ -1739,7 +1908,7 @@ final class BattleSceneView: NSView {
             shard.shadowRadius = 2
             shard.frame = NSRect(x: 0, y: 0, width: 4, height: 4)
             shard.position = center
-            layer?.addSublayer(shard)
+            effectsLayer?.addSublayer(shard)
 
             let angle = CGFloat(index) / 8 * CGFloat.pi * 2
             let distance = CGFloat(16 + (index % 3) * 6)
@@ -1786,7 +1955,7 @@ final class BattleSceneView: NSView {
             spark.shadowRadius = 1.5
             spark.frame = NSRect(x: 0, y: 0, width: intense ? 6 : 4, height: 2)
             spark.position = center
-            layer?.addSublayer(spark)
+            effectsLayer?.addSublayer(spark)
 
             let angle = (CGFloat(index) / CGFloat(sparkCount) + 0.12) * CGFloat.pi * 2
             let distance = intense ? CGFloat.random(in: 12...20) : CGFloat.random(in: 8...14)
@@ -1828,11 +1997,6 @@ final class BattleSceneView: NSView {
         let attackColor = heroRole.attackColor
         let clampedIntensity = min(max(intensity, 0), 3)
         let effectTier = min(max(skillLoadout.effectTier + clampedIntensity * 2, 0), 14)
-        heroView.poseOffset = 5
-        monsterView.poseOffset = -3
-        let heroFrame = heroView.frame
-        var heroLungeFrame = heroFrame
-        heroLungeFrame.origin.x += 5
 
         if isCrit {
             showFloatingText(
@@ -1857,6 +2021,16 @@ final class BattleSceneView: NSView {
         playFlash(color: attackColor.withAlphaComponent(
             min(0.5, (isCrit ? 0.30 : 0.14 + CGFloat(min(effectTier, 6)) * 0.015) + CGFloat(clampedIntensity) * 0.05)
         ))
+        // The hero's own swing: the tell that an attack fired, independent of
+        // whatever projectile or impact art the current tier adds on top.
+        heroView.playAttackTell(direction: 1, reach: isCrit ? 9 : 7)
+        playAttackSwing(
+            on: heroSwingLayer,
+            from: heroView.frame,
+            direction: 1,
+            color: attackColor,
+            lineWidth: isCrit ? 5 : 4
+        )
         if isCrit {
             shake(layer: monsterView.layer, distance: 7 + CGFloat(clampedIntensity), duration: 0.3)
             shake(layer: layer, distance: 2.5, duration: 0.18)
@@ -1865,26 +2039,16 @@ final class BattleSceneView: NSView {
         } else {
             shakeMonster()
         }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            heroView.animator().frame = heroLungeFrame
-        } completionHandler: {
-            Task { @MainActor in
-                self.heroView.frame = heroFrame
-                self.heroView.poseOffset = 0
-                self.monsterView.poseOffset = 0
-            }
-        }
     }
 
     private func playBasicSlash(color: NSColor, tier: Int) {
         slashLayer.removeAllAnimations()
-        slashLayer.path = basicSlashPath().cgPath
+        slashLayer.path = basicSlashPath()
+        slashLayer.fillColor = nil
         slashLayer.strokeColor = color.withAlphaComponent(0.95).cgColor
         slashLayer.shadowColor = color.cgColor
-        slashLayer.lineWidth = 3.5 + CGFloat(min(tier, 8)) * 0.4
+        slashLayer.lineWidth = 4 + CGFloat(min(tier, 8)) * 0.5
+        slashLayer.lineCap = .round
         slashLayer.opacity = 1
 
         let stroke = CABasicAnimation(keyPath: "strokeEnd")
@@ -1911,7 +2075,7 @@ final class BattleSceneView: NSView {
     }
 
     private func playMonsterHitFlash() {
-        monsterHitFlashLayer.frame = monsterVisualFrame.insetBy(dx: -2, dy: -2)
+        placeEffect(monsterHitFlashLayer, frame: monsterVisualFrame.insetBy(dx: -2, dy: -2))
         monsterHitFlashLayer.removeAllAnimations()
         let flash = CAKeyframeAnimation(keyPath: "opacity")
         flash.values = [0.55, 0]
@@ -1943,8 +2107,14 @@ final class BattleSceneView: NSView {
         } else {
             showFloatingText("-\(damage)", color: color, anchor: .monster)
         }
-        heroView.poseOffset = 7
-        monsterView.poseOffset = -5
+        heroView.playAttackTell(direction: 1, reach: 9)
+        playAttackSwing(
+            on: heroSwingLayer,
+            from: heroView.frame,
+            direction: 1,
+            color: color,
+            lineWidth: 5
+        )
         playFlash(color: color.withAlphaComponent(0.26 + CGFloat(min(rank, 3)) * 0.04 + (isCrit ? 0.12 : 0)))
         playSkillBeam(color: color, tier: tier)
 
@@ -1985,10 +2155,6 @@ final class BattleSceneView: NSView {
         }
 
         shakeMonster()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            self.heroView.poseOffset = 0
-            self.monsterView.poseOffset = 0
-        }
     }
 
     func playMonsterAttack(damage: Double) {
@@ -2000,79 +2166,89 @@ final class BattleSceneView: NSView {
             color: NSColor(red: 1.0, green: 0.36, blue: 0.32, alpha: 1.0),
             anchor: .hero
         )
-        heroView.poseOffset = -3
-        monsterView.poseOffset = -5
         playFlash(color: NSColor(red: 1.0, green: 0.18, blue: 0.16, alpha: 0.20))
         playMonsterProjectile()
         shakeHero()
 
-        // Skip the frame lunge while the monster is still sliding into view so
-        // the approach animation is not stomped.
-        guard monsterEngaged else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                self.heroView.poseOffset = 0
-                self.monsterView.poseOffset = 0
-            }
-            return
-        }
-
-        let monsterFrame = monsterView.frame
-        var monsterLungeFrame = monsterFrame
-        monsterLungeFrame.origin.x -= 6
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.14
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            monsterView.animator().frame = monsterLungeFrame
-        } completionHandler: {
-            Task { @MainActor in
-                self.monsterView.frame = monsterFrame
-                self.heroView.poseOffset = 0
-                self.monsterView.poseOffset = 0
-            }
-        }
+        // Mirror of the hero's tell. Transform-based, so it composes with the
+        // approach animation instead of stomping the monster's frame - which is
+        // why this no longer has to sit out an unfinished approach.
+        monsterView.playAttackTell(direction: -1, reach: 8)
+        playAttackSwing(
+            on: monsterSwingLayer,
+            from: monsterVisualFrame,
+            direction: -1,
+            color: NSColor(red: 1.0, green: 0.32, blue: 0.26, alpha: 1.0)
+        )
     }
 
     private func playMonsterProjectile() {
-        let projectile = CATextLayer()
-        projectile.string = "💩"
-        projectile.fontSize = 15
-        projectile.alignmentMode = .center
-        projectile.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        projectile.frame = CGRect(x: 0, y: 0, width: 20, height: 20)
-        projectile.position = CGPoint(x: heroView.frame.midX + 8, y: heroView.frame.midY)
-        projectile.opacity = 1
-        layer?.addSublayer(projectile)
+        // Three parallel claw marks raked from the monster toward the hero, then
+        // a flash where they land. Every layer here is reused: a monster attack
+        // allocates nothing and never adds to or removes from the layer tree.
+        let clawColor = NSColor(red: 1.0, green: 0.25, blue: 0.2, alpha: 0.9)
+        let start = CGPoint(x: monsterVisualFrame.minX - 8, y: monsterVisualFrame.midY)
+        // The rake ends *on* the hero, not at the gap in front of it: with the
+        // monster standing this close, stopping at the hero's edge left the marks
+        // as three specks nobody could read.
+        let end = CGPoint(x: heroView.frame.midX + 4, y: heroView.frame.midY)
+        let now = CACurrentMediaTime()
 
-        let start = CGPoint(x: monsterVisualFrame.minX - 4, y: monsterVisualFrame.midY)
-        let end = CGPoint(x: heroView.frame.midX + 8, y: heroView.frame.midY)
+        for (index, claw) in monsterClawLayers.enumerated() {
+            let offset = CGFloat(index - 1) * 6
 
-        let flight = CABasicAnimation(keyPath: "position")
-        flight.fromValue = start
-        flight.toValue = end
-        flight.duration = 0.36
-        flight.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            // Claw path: curved slash from monster to hero
+            let clawPath = CGMutablePath()
+            let midX = (start.x + end.x) / 2
+            let controlY = start.y - 15 + offset
 
-        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-        spin.fromValue = 0
-        spin.toValue = -CGFloat.pi * 1.5
-        spin.duration = 0.36
+            clawPath.move(to: CGPoint(x: start.x, y: start.y + offset))
+            clawPath.addQuadCurve(
+                to: CGPoint(x: end.x, y: end.y + offset),
+                control: CGPoint(x: midX, y: controlY)
+            )
 
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.beginTime = CACurrentMediaTime() + 0.30
-        fade.duration = 0.08
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
+            claw.removeAllAnimations()
+            claw.path = clawPath
+            claw.strokeColor = clawColor.cgColor
 
-        projectile.add(flight, forKey: "monsterProjectileFlight")
-        projectile.add(spin, forKey: "monsterProjectileSpin")
-        projectile.add(fade, forKey: "monsterProjectileFade")
+            let stroke = CABasicAnimation(keyPath: "strokeEnd")
+            stroke.fromValue = 0
+            stroke.toValue = 1
+            stroke.duration = 0.15
+            stroke.beginTime = now + Double(index) * 0.03
+            stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-            projectile.removeFromSuperlayer()
+            // Held at 1 until the stagger of this mark starts, then faded out.
+            // The model opacity stays 0, so nothing lingers once it ends.
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [1, 1, 0]
+            fade.keyTimes = [0, 0.35, 1]
+            fade.duration = 0.35
+            fade.beginTime = now + Double(index) * 0.03
+
+            claw.add(stroke, forKey: "clawStroke")
+            claw.add(fade, forKey: "clawFade")
         }
+
+        // Impact flash on hero
+        heroImpactLayer.removeAllAnimations()
+        placeEffect(heroImpactLayer, at: CGPoint(x: heroView.frame.midX, y: heroView.frame.midY))
+
+        let impactFlash = CABasicAnimation(keyPath: "opacity")
+        impactFlash.fromValue = 1
+        impactFlash.toValue = 0
+        impactFlash.duration = 0.2
+        impactFlash.beginTime = now + 0.12
+
+        let impactScale = CABasicAnimation(keyPath: "transform.scale")
+        impactScale.fromValue = 0.5
+        impactScale.toValue = 1.5
+        impactScale.duration = 0.2
+        impactScale.beginTime = now + 0.12
+
+        heroImpactLayer.add(impactFlash, forKey: "impactFlash")
+        heroImpactLayer.add(impactScale, forKey: "impactScale")
     }
 
     private func setup() {
@@ -2083,12 +2259,9 @@ final class BattleSceneView: NSView {
 
         addSubview(backdropView)
 
-        groundLayer.backgroundColor = backdrop.accentColor
-        layer?.addSublayer(groundLayer)
-
         flashLayer.backgroundColor = NSColor.clear.cgColor
         flashLayer.opacity = 0
-        layer?.addSublayer(flashLayer)
+        effectsLayer?.addSublayer(flashLayer)
 
         slashLayer.strokeColor = HeroRole.other.attackColor.cgColor
         slashLayer.fillColor = nil
@@ -2097,12 +2270,12 @@ final class BattleSceneView: NSView {
         slashLayer.opacity = 0
         slashLayer.shadowOpacity = 0.2
         slashLayer.shadowRadius = 3
-        layer?.addSublayer(slashLayer)
+        effectsLayer?.addSublayer(slashLayer)
 
         projectileLayer.opacity = 0
         projectileLayer.shadowOpacity = 0.16
         projectileLayer.shadowRadius = 2
-        layer?.addSublayer(projectileLayer)
+        effectsLayer?.addSublayer(projectileLayer)
 
         impactLayer.fillColor = nil
         impactLayer.lineWidth = 3
@@ -2110,7 +2283,7 @@ final class BattleSceneView: NSView {
         impactLayer.opacity = 0
         impactLayer.shadowOpacity = 0.18
         impactLayer.shadowRadius = 2
-        layer?.addSublayer(impactLayer)
+        effectsLayer?.addSublayer(impactLayer)
 
         arcLayer.fillColor = nil
         arcLayer.lineCap = .round
@@ -2118,25 +2291,25 @@ final class BattleSceneView: NSView {
         arcLayer.opacity = 0
         arcLayer.shadowOpacity = 0.18
         arcLayer.shadowRadius = 2
-        layer?.addSublayer(arcLayer)
+        effectsLayer?.addSublayer(arcLayer)
 
         novaLayer.fillColor = nil
         novaLayer.lineCap = .round
         novaLayer.opacity = 0
         novaLayer.shadowOpacity = 0
-        layer?.addSublayer(novaLayer)
+        effectsLayer?.addSublayer(novaLayer)
 
         pooledProjectileLayers.forEach { projectile in
             projectile.opacity = 0
             projectile.shadowOpacity = 0
-            layer?.addSublayer(projectile)
+            effectsLayer?.addSublayer(projectile)
         }
         pooledImpactLayers.forEach { impact in
             impact.fillColor = nil
             impact.lineCap = .round
             impact.opacity = 0
             impact.shadowOpacity = 0
-            layer?.addSublayer(impact)
+            effectsLayer?.addSublayer(impact)
         }
 
         floatingTextLabels.forEach { label in
@@ -2155,22 +2328,127 @@ final class BattleSceneView: NSView {
 
         addSubview(heroView)
         addSubview(monsterView)
+        // Last, so the effect overlay covers the backdrop and both actors.
+        addSubview(effectsHost)
 
         monsterHitFlashLayer.backgroundColor = NSColor.white.cgColor
         monsterHitFlashLayer.cornerRadius = 6
         monsterHitFlashLayer.opacity = 0
-        layer?.addSublayer(monsterHitFlashLayer)
+        effectsLayer?.addSublayer(monsterHitFlashLayer)
+
+        // The swing arcs live in the overlay too, so they read in front of the
+        // sprite that threw them.
+        [heroSwingLayer, monsterSwingLayer].forEach { swing in
+            swing.fillColor = nil
+            swing.lineCap = .round
+            swing.lineWidth = 4
+            swing.opacity = 0
+            effectsLayer?.addSublayer(swing)
+        }
+
+        monsterClawLayers.enumerated().forEach { index, claw in
+            claw.fillColor = nil
+            claw.lineCap = .round
+            claw.lineWidth = 3 - CGFloat(index) * 0.5
+            claw.opacity = 0
+            effectsLayer?.addSublayer(claw)
+        }
+
+        // The hit the hero takes: a red ring plus a soft fill, so it reads as a
+        // flash on the sprite rather than a dark blotch over it.
+        heroImpactLayer.path = CGPath(ellipseIn: CGRect(x: -15, y: -15, width: 30, height: 30), transform: nil)
+        heroImpactLayer.fillColor = NSColor(red: 1.0, green: 0.3, blue: 0.25, alpha: 0.22).cgColor
+        heroImpactLayer.strokeColor = NSColor(red: 1.0, green: 0.42, blue: 0.34, alpha: 0.95).cgColor
+        heroImpactLayer.lineWidth = 2.5
+        heroImpactLayer.opacity = 0
+        effectsLayer?.addSublayer(heroImpactLayer)
     }
 
-    private func basicSlashPath() -> NSBezierPath {
-        let center = CGPoint(x: monsterVisualFrame.midX, y: monsterVisualFrame.midY)
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: center.x - 16, y: center.y + 13))
-        path.curve(
-            to: NSPoint(x: center.x + 14, y: center.y - 11),
-            controlPoint1: NSPoint(x: center.x - 5, y: center.y + 5),
-            controlPoint2: NSPoint(x: center.x + 6, y: center.y - 6)
+    /// A sword arc swung from the attacker's front edge: the clearest cue that a
+    /// hit was triggered, and cheap - one path rebuild plus two animations on a
+    /// layer that already exists. `direction` is +1 for the hero (swings right)
+    /// and -1 for the monster (swings left).
+    private func playAttackSwing(
+        on swing: CAShapeLayer,
+        from actorFrame: CGRect,
+        direction: CGFloat,
+        color: NSColor,
+        lineWidth: CGFloat = 5
+    ) {
+        let radius = max(16, actorFrame.width * 0.6)
+        let center = CGPoint(
+            x: direction > 0 ? actorFrame.maxX - 8 : actorFrame.minX + 8,
+            y: actorFrame.midY
         )
+        let halfSweep: CGFloat = 62 * .pi / 180
+        let base: CGFloat = direction > 0 ? 0 : .pi
+
+        // Both sides start at the top of the arc and sweep down, so the stroke
+        // animation always looks like a downward slash.
+        let path = CGMutablePath()
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: direction > 0 ? base + halfSweep : base - halfSweep,
+            endAngle: direction > 0 ? base - halfSweep : base + halfSweep,
+            clockwise: direction > 0
+        )
+
+        swing.removeAllAnimations()
+        swing.path = path
+        swing.strokeColor = color.cgColor
+        swing.lineWidth = lineWidth
+        // A glow around the blade: one shadow on one layer, only alive for the
+        // quarter second the arc is on screen.
+        swing.shadowColor = color.cgColor
+        swing.shadowOpacity = 0.9
+        swing.shadowRadius = 4
+        swing.shadowOffset = .zero
+
+        let stroke = CABasicAnimation(keyPath: "strokeEnd")
+        stroke.fromValue = 0
+        stroke.toValue = 1
+        stroke.duration = 0.13
+        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        // A trailing edge that chases the leading one, so the arc thins out
+        // behind the swing instead of hanging in the air as a full ring.
+        let trail = CABasicAnimation(keyPath: "strokeStart")
+        trail.fromValue = 0
+        trail.toValue = 1
+        trail.duration = 0.26
+        trail.timingFunction = CAMediaTimingFunction(name: .easeIn)
+
+        // The layer's model opacity stays 0, so the keyframe both shows and
+        // hides the swing: no cleanup timer, nothing left visible on screen.
+        let flash = CAKeyframeAnimation(keyPath: "opacity")
+        flash.values = [1, 1, 0]
+        flash.keyTimes = [0, 0.6, 1]
+        flash.duration = 0.28
+        flash.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        swing.add(stroke, forKey: "attackSwingStroke")
+        swing.add(trail, forKey: "attackSwingTrail")
+        swing.add(flash, forKey: "attackSwingFlash")
+    }
+
+    private func basicSlashPath() -> CGPath {
+        // Semi-circular sword arc - a sweeping slash from upper-left to lower-right
+        let center = CGPoint(x: monsterVisualFrame.midX, y: monsterVisualFrame.midY)
+        let radius: CGFloat = 28
+
+        let path = CGMutablePath()
+
+        // Draw arc from 135° to -45° (top-left → top → bottom-right)
+        // In flipped coordinates (NSView), y increases downward
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: 135 * .pi / 180,
+            endAngle: -45 * .pi / 180,
+            clockwise: true
+        )
+
         return path
     }
 
@@ -2283,7 +2561,7 @@ final class BattleSceneView: NSView {
         let cgPath = path.cgPath
         beam.path = cgPath
         beam.shadowPath = cgPath
-        layer?.addSublayer(beam)
+        effectsLayer?.addSublayer(beam)
 
         let stroke = CABasicAnimation(keyPath: "strokeEnd")
         stroke.fromValue = 0
@@ -2329,7 +2607,7 @@ final class BattleSceneView: NSView {
         flare.position = center
         flare.path = path
         flare.opacity = 1
-        layer?.addSublayer(flare)
+        effectsLayer?.addSublayer(flare)
 
         let slide = CABasicAnimation(keyPath: "transform.translation.x")
         slide.fromValue = -5
@@ -2373,7 +2651,7 @@ final class BattleSceneView: NSView {
         rift.path = path
         rift.shadowPath = path
         rift.opacity = 1
-        layer?.addSublayer(rift)
+        effectsLayer?.addSublayer(rift)
 
         let rotate = CABasicAnimation(keyPath: "transform.rotation.z")
         rotate.fromValue = -0.18
@@ -2424,7 +2702,7 @@ final class BattleSceneView: NSView {
     }
 
     private func fireSustainedProjectile() {
-        guard !heroDefeated, bounds.width > 40, bounds.height > 24 else {
+        guard !heroDefeated, monsterEngaged, bounds.width > 40, bounds.height > 24 else {
             return
         }
 
@@ -2438,10 +2716,17 @@ final class BattleSceneView: NSView {
             return
         }
 
-        heroView.poseOffset = 3
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            self.heroView.poseOffset = 0
-        }
+        // Sustained fire gets the swing tell too, at a shorter reach: it repeats
+        // once or twice a second, so it has to stay cheap and not read as a
+        // full-strength strike.
+        heroView.playAttackTell(direction: 1, reach: 4)
+        playAttackSwing(
+            on: heroSwingLayer,
+            from: heroView.frame,
+            direction: 1,
+            color: color,
+            lineWidth: 3
+        )
 
         for index in 0..<count {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.055) {
@@ -2581,13 +2866,36 @@ final class BattleSceneView: NSView {
         monsterView.layer?.add(flash, forKey: "monsterHitFlash")
     }
 
+    /// Put a reused effect layer exactly where the hit happened. A bare CALayer
+    /// animates its own geometry implicitly, so without this the layer spends a
+    /// quarter second gliding over from the last hit while the explicit
+    /// animation it was moved for is already playing somewhere else.
+    private func placeEffect(_ layer: CALayer, at point: CGPoint) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.position = point
+        CATransaction.commit()
+    }
+
+    private func placeEffect(_ layer: CALayer, frame: CGRect) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.frame = frame
+        CATransaction.commit()
+    }
+
     private func playImpact(color: NSColor, tier: Int) {
         impactLayer.removeAllAnimations()
         impactLayer.strokeColor = color.cgColor
         impactLayer.shadowColor = color.cgColor
         impactLayer.lineWidth = 3 + CGFloat(min(tier, 4)) * 0.45
         impactLayer.opacity = 1
-        impactLayer.path = impactPath(center: CGPoint(x: monsterVisualFrame.midX - 4, y: monsterVisualFrame.midY - 3)).cgPath
+        // The rays are built around the layer's own origin and the layer is moved
+        // onto the monster, so the scale animation below blows the star up in
+        // place. Drawing it at scene coordinates instead would scale it away
+        // from the scene's origin and throw the star off to the right.
+        placeEffect(impactLayer, at: CGPoint(x: monsterVisualFrame.midX - 4, y: monsterVisualFrame.midY - 3))
+        impactLayer.path = impactPath(center: .zero).cgPath
 
         let stroke = CABasicAnimation(keyPath: "strokeEnd")
         stroke.fromValue = 0
@@ -2729,7 +3037,7 @@ final class BattleSceneView: NSView {
         mark.path = path
         mark.shadowPath = path
         mark.opacity = 1
-        layer?.addSublayer(mark)
+        effectsLayer?.addSublayer(mark)
 
         let stroke = CABasicAnimation(keyPath: "strokeEnd")
         stroke.fromValue = 0
@@ -2764,7 +3072,7 @@ final class BattleSceneView: NSView {
             spark.frame = NSRect(x: 0, y: 0, width: 7, height: 2)
             spark.position = center
             spark.opacity = 1
-            layer?.addSublayer(spark)
+            effectsLayer?.addSublayer(spark)
 
             let angle = CGFloat(index) / CGFloat(max(1, sparkCount)) * CGFloat.pi * 2
             let radius = 18 + CGFloat(min(tier, 8)) * 1.4
@@ -2887,16 +3195,6 @@ final class BattleSceneView: NSView {
             path.closeSubpath()
             path.addRect(CGRect(x: 7, y: 7, width: 2, height: 2))
         }
-        return path
-    }
-
-    private func sustainedProjectilePath(in rect: CGRect) -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: rect.minX, y: rect.midY))
-        path.line(to: NSPoint(x: rect.midX, y: rect.minY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.midY))
-        path.line(to: NSPoint(x: rect.midX, y: rect.maxY))
-        path.close()
         return path
     }
 

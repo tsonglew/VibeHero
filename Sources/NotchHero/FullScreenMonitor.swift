@@ -16,7 +16,7 @@ enum FullScreenHidePreference {
 // window covers the whole pinned screen — that is how macOS lays out
 // full-screen apps. Window bounds are readable without screen-recording
 // permission; only titles are gated.
-final class FullScreenMonitor {
+final class FullScreenMonitor: @unchecked Sendable {
     var onChange: ((Bool) -> Void)?
 
     private(set) var isFullScreenActive = false {

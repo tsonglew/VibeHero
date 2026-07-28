@@ -15,6 +15,9 @@ final class NotchContentView: NSView {
 
     private let expandedHUD = NSView()
     private let battleScene = BattleSceneView()
+    private let sessionListView = SessionListView()
+    private let viewToggleButton = NSButton()
+    private var isShowingSessions = false
     private let titleLabel = NSTextField(labelWithString: "Vibe Hero")
     private let tokenLabel = NSTextField(labelWithString: L10n.string(.todayTokens, "184K"))
     private let rateLabel = NSTextField(labelWithString: L10n.string(.xpPerMinute, "812"))
@@ -72,6 +75,23 @@ final class NotchContentView: NSView {
 
     var onHoverChanged: ((Bool) -> Void)?
     var onSettingsRequested: (() -> Void)?
+    /// Fires when the expanded panel wants a different height, so the window can
+    /// resize while it is already open.
+    var onExpandedHeightChanged: (() -> Void)?
+
+    /// Vertical chrome `layoutExpandedHUD` puts around the session list: the
+    /// 10pt window inset on both edges, the title row, and the 4pt bottom inset.
+    /// Keep in sync with the frames there.
+    private static let sessionListChrome: CGFloat = 50
+
+    private var lastRequestedExpandedHeight: CGFloat?
+
+    /// Notch height the expanded panel would like. `nil` in game mode, where the
+    /// default expanded size is exactly right.
+    var preferredExpandedNotchHeight: CGFloat? {
+        guard isShowingSessions else { return nil }
+        return sessionListView.preferredContentHeight + Self.sessionListChrome
+    }
 
     init(frame frameRect: NSRect, collapsedStyle: NotchStyle, expandedStyle: NotchStyle) {
         self.collapsedStyle = collapsedStyle
@@ -320,6 +340,16 @@ final class NotchContentView: NSView {
         settingsButton.target = self
         settingsButton.action = #selector(openSettings)
 
+        // View toggle button (game/sessions)
+        viewToggleButton.image = NSImage(systemSymbolName: "rectangle.stack.person.crop", accessibilityDescription: "Toggle View")
+        viewToggleButton.imagePosition = .imageOnly
+        viewToggleButton.bezelStyle = .regularSquare
+        viewToggleButton.isBordered = false
+        viewToggleButton.contentTintColor = NSColor.white.withAlphaComponent(0.72)
+        viewToggleButton.target = self
+        viewToggleButton.action = #selector(toggleView)
+        viewToggleButton.toolTip = L10n.text(.tabSessions)
+
         expandedHUD.addSubview(titleLabel)
         expandedHUD.addSubview(tokenLabel)
         expandedHUD.addSubview(rateLabel)
@@ -335,7 +365,30 @@ final class NotchContentView: NSView {
         expandedHUD.addSubview(monsterHPBar)
         expandedHUD.addSubview(combatLabel)
         expandedHUD.addSubview(settingsButton)
+        expandedHUD.addSubview(viewToggleButton)
+        expandedHUD.addSubview(sessionListView)
+        sessionListView.isHidden = true
         addSubview(expandedHUD)
+
+        // Setup session monitoring. Register as an observer (not a single
+        // callback) so the settings window's session list can observe in
+        // parallel without stealing the HUD's updates.
+        SessionMonitor.shared.addObserver(self) { [weak self] sessions in
+            Task { @MainActor in
+                guard let self else { return }
+                self.sessionListView.updateSessions(sessions)
+                self.notifyExpandedHeightIfChanged()
+            }
+        }
+    }
+
+    /// Tells the window to resize only when the wanted height actually moved -
+    /// scans land every few seconds and most of them change nothing.
+    private func notifyExpandedHeightIfChanged() {
+        let requested = preferredExpandedNotchHeight
+        guard requested != lastRequestedExpandedHeight else { return }
+        lastRequestedExpandedHeight = requested
+        onExpandedHeightChanged?()
     }
 
     private func layoutCollapsedHUD(in notchRect: NSRect) {
@@ -375,6 +428,7 @@ final class NotchContentView: NSView {
 
         titleLabel.frame = NSRect(x: 4, y: height - 18, width: leftColumnWidth, height: 15)
         settingsButton.frame = NSRect(x: width - 24, y: height - 22, width: 20, height: 20)
+        viewToggleButton.frame = NSRect(x: width - 50, y: height - 22, width: 20, height: 20)
         skillEnergyLabel.frame = NSRect(x: 4, y: height - 34, width: leftColumnWidth, height: 11)
         skillEnergyBar.frame = NSRect(x: 4, y: height - 43, width: leftColumnWidth, height: 4)
         tokenLabel.frame = NSRect(x: rightColumnX, y: height - 18, width: rightColumnWidth, height: 15)
@@ -385,6 +439,11 @@ final class NotchContentView: NSView {
         let topStatusBottom = min(skillEnergyBar.frame.minY, skillLabel.frame.minY)
         let battleTop = max(battleY + 44, topStatusBottom - 6)
         battleScene.frame = NSRect(x: 8, y: battleY, width: width - 16, height: battleTop - battleY)
+
+        // Session list takes full available space (from below title to bottom)
+        let sessionTop = titleLabel.frame.minY - 8
+        sessionListView.frame = NSRect(x: 8, y: 4, width: width - 16, height: sessionTop - 4)
+
         let statGap: CGFloat = 8
         let statWidth = max(110, (width - 16 - statGap * 2) / 3)
         let leftStatX: CGFloat = 8
@@ -398,14 +457,67 @@ final class NotchContentView: NSView {
         monsterHPBar.frame = NSRect(x: monsterStatX, y: 15, width: statWidth, height: 4)
         combatLabel.frame = NSRect(x: 8, y: 2, width: width - 16, height: 13)
 
-        [titleLabel, tokenLabel, rateLabel, skillLabel, skillEnergyLabel, heroHPLabel, heroXPLabel, monsterHPLabel, combatLabel, settingsButton].forEach {
+        [titleLabel, tokenLabel, rateLabel, skillLabel, skillEnergyLabel, heroHPLabel, heroXPLabel, monsterHPLabel, combatLabel, settingsButton, viewToggleButton].forEach {
             expandedHUD.addSubview($0, positioned: .above, relativeTo: nil)
         }
         expandedHUD.addSubview(skillEnergyBar, positioned: .above, relativeTo: battleScene)
+        // Session list should be at the top when visible
+        expandedHUD.addSubview(sessionListView, positioned: .above, relativeTo: nil)
     }
 
     @objc private func openSettings() {
         onSettingsRequested?()
+    }
+
+    @objc private func toggleView() {
+        isShowingSessions.toggle()
+
+        // Toggle game UI visibility
+        battleScene.isHidden = isShowingSessions
+        sessionListView.isHidden = !isShowingSessions
+
+        // Hide all game data UI when showing sessions
+        let gameUIElements: [NSView] = [
+            heroHPLabel, heroHPBar, heroXPLabel, heroXPBar,
+            monsterHPLabel, monsterHPBar, combatLabel,
+            skillEnergyLabel, skillEnergyBar, skillLabel,
+            tokenLabel, rateLabel
+        ]
+
+        for element in gameUIElements {
+            element.isHidden = isShowingSessions
+        }
+
+        // Update title for session view
+        if isShowingSessions {
+            titleLabel.stringValue = L10n.text(.activeSessions)
+        } else {
+            updateTitleLabel()
+        }
+
+        // Update button icon
+        let iconName = isShowingSessions ? "gamecontroller" : "rectangle.stack.person.crop"
+        viewToggleButton.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "Toggle View")
+        viewToggleButton.toolTip = isShowingSessions ? L10n.text(.tabGame) : L10n.text(.tabSessions)
+
+        // Force layout update to ensure sessionListView has correct frame
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+
+        // Session mode wants a taller panel than the game HUD.
+        notifyExpandedHeightIfChanged()
+
+        // Start session monitoring when showing sessions
+        if isShowingSessions {
+            SessionMonitor.shared.startMonitoring()
+        }
+    }
+
+    // The session list only scanned once, when the view was toggled on, so it
+    // went stale as soon as it was open. SessionMonitor throttles internally.
+    private func refreshSessionsIfVisible() {
+        guard isShowingSessions, isExpanded else { return }
+        SessionMonitor.shared.refreshIfNeeded()
     }
 
     private func updateRoleUI() {
@@ -447,6 +559,7 @@ final class NotchContentView: NSView {
         usageTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshUsage()
+                self?.refreshSessionsIfVisible()
             }
         }
 
@@ -561,12 +674,12 @@ final class NotchContentView: NSView {
                 self?.playBurstStrike(strikeTokens: strikeTokens, comboMultiplier: comboMultiplier, intensity: tier)
             }
         }
-        maybeCastSkill(now: Date())
+        // Skill casting disabled - only basic attacks
         updateGameLabels()
     }
 
     private func playBurstStrike(strikeTokens: Int, comboMultiplier: CGFloat, intensity: Int) {
-        guard !isDefeated, strikeTokens > 0 else {
+        guard !isDefeated, battleScene.monsterEngaged, strikeTokens > 0 else {
             return
         }
 
@@ -601,6 +714,7 @@ final class NotchContentView: NSView {
 
     private func applySustainedMonsterDamage(_ damageFraction: CGFloat) {
         guard !isDefeated,
+              battleScene.monsterEngaged,
               hasRealUsageData,
               tokenActivityExpiresAt.map({ $0 > Date() }) == true else {
             return
@@ -609,8 +723,7 @@ final class NotchContentView: NSView {
         if let reward = damageMonster(by: damageFraction) {
             combatLabel.stringValue = defeatText(for: reward)
         }
-        gainSkillEnergy(by: SkillCharge.sustainedHit)
-        maybeCastSkill(now: Date())
+        // Skill casting disabled - only basic attacks
         updateGameLabels()
     }
 
@@ -659,19 +772,19 @@ final class NotchContentView: NSView {
         currentMonster = currentMonster.next
         currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
         monsterHealth = 1
-        
+
         // Spawn batch in battle scene
         battleScene.spawnMonsterBatch(
             kind: currentMonster,
             isBoss: currentMonsterIsBoss,
             stage: currentStage
         )
-        
+
         monsterHPLabel.textColor = currentMonster.hpColor
         monsterHPBar.fillColor = currentMonster.hpColor
         compactHeroView.monsterKind = currentMonster
         compactHeroView.isBoss = currentMonsterIsBoss
-        
+
         if currentMonsterIsBoss {
             combatLabel.stringValue = L10n.string(.bossAppears, currentMonster.displayName)
             battleScene.playStageBanner(L10n.string(.bossAppears, currentMonster.shortName), isBoss: true)
@@ -681,12 +794,12 @@ final class NotchContentView: NSView {
         updateTitleLabel()
         updateGameLabels()
     }
-    
+
     // Called when a single monster in the batch is defeated
     private func scheduleMonsterRespawn() {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            
+
             // Try to advance to next monster in current batch
             if self.battleScene.hasNextMonsterInBatch() {
                 self.battleScene.advanceToNextMonster()
@@ -858,7 +971,7 @@ final class NotchContentView: NSView {
     }
 
     private func maybeCastSkill(now: Date) {
-        guard !isDefeated, skillEnergy >= 1 else {
+        guard !isDefeated, battleScene.monsterEngaged, skillEnergy >= 1 else {
             return
         }
         if let skillCooldownUntil, skillCooldownUntil > now {
@@ -1113,10 +1226,10 @@ struct NotchStyle {
 
     static let fallbackExpanded = makeExpanded(collapsed: fallbackCollapsed)
 
-    static func styles(for screen: NSScreen?) -> (collapsed: NotchStyle, expanded: NotchStyle) {
+    static func styles(for screen: NSScreen?, expandedNotchHeight: CGFloat? = nil) -> (collapsed: NotchStyle, expanded: NotchStyle) {
         let topBarHeight = screen.map { $0.frame.maxY - $0.visibleFrame.maxY } ?? fallbackCollapsed.notchSize.height
         let collapsed = makeCollapsed(topBarHeight: topBarHeight)
-        return (collapsed, makeExpanded(collapsed: collapsed))
+        return (collapsed, makeExpanded(collapsed: collapsed, requestedHeight: expandedNotchHeight, screen: screen))
     }
 
     private static func makeCollapsed(topBarHeight: CGFloat) -> NotchStyle {
@@ -1133,18 +1246,36 @@ struct NotchStyle {
         )
     }
 
-    private static func makeExpanded(collapsed: NotchStyle) -> NotchStyle {
-        let height = round(collapsed.notchSize.height + 112)
+    /// `requestedHeight` lets the session list ask for a taller panel than the
+    /// game HUD needs, so a long list is readable instead of clipped to three
+    /// rows. It only ever grows the panel, and never past `heightCap`.
+    private static func makeExpanded(
+        collapsed: NotchStyle,
+        requestedHeight: CGFloat? = nil,
+        screen: NSScreen? = nil
+    ) -> NotchStyle {
+        let base = round(collapsed.notchSize.height + 112)
+        let height = min(max(base, requestedHeight.map { round($0) } ?? base), heightCap(for: screen, base: base))
         let width = round(max(468, collapsed.notchSize.width + 260))
 
         return NotchStyle(
             windowSize: NSSize(width: width + 34, height: height + 18),
             notchSize: NSSize(width: width, height: height),
             topInset: 0,
-            cornerRadius: round(min(34, height * 0.28)),
+            cornerRadius: round(min(34, base * 0.28)),
             shadowRadius: 24,
             shadowOpacity: 0.52
         )
+    }
+
+    /// However many sessions are open, the panel stops at 45% of the display so
+    /// it stays an overlay rather than a window; past that the list scrolls.
+    private static func heightCap(for screen: NSScreen?, base: CGFloat) -> CGFloat {
+        guard let screenHeight = screen?.frame.height else {
+            return base
+        }
+        // The window adds 18pt of shadow padding below the notch shape.
+        return max(base, round(screenHeight * 0.45) - 18)
     }
 }
 
