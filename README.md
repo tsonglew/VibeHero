@@ -4,6 +4,10 @@
   <img src="docs/images/vibe-hero-poster.png" alt="Vibe Hero poster: the pixel hero raising a glowing code shield against a towering red-eyed golem boss over a neon-city backdrop, under the golden VIBE HERO logo and the tagline “Turning Code Tokens into Hero Power!”, with the battle HUD and the live agent session list below" width="470">
 </p>
 
+<p align="center">
+  <img src="docs/images/vibe-hero-gameplay.gif" alt="25 seconds of gameplay in the expanded notch HUD: token bursts become staggered sword strikes with flying damage numbers, a kill banner drops loot, idling draws a golem counterattack with HP-0.1 popping beside the hero, and a final CRIT -4K" width="760">
+</p>
+
 Your MacBook notch is a pixel-art RPG, and your token usage is the sword.
 
 Vibe Hero is a tiny native macOS app (AppKit + SwiftPM, no third-party dependencies) that
