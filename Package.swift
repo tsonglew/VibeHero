@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "NotchHero",
+    name: "VibeHero",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "NotchHero", targets: ["NotchHero"])
+        .executable(name: "VibeHero", targets: ["VibeHero"])
     ],
     targets: [
         .executableTarget(
-            name: "NotchHero",
-            path: "Sources/NotchHero"
+            name: "VibeHero",
+            path: "Sources/VibeHero"
         )
     ]
 )

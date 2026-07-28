@@ -1,7 +1,7 @@
 import Foundation
 
 extension Notification.Name {
-    static let notchHeroLanguageChanged = Notification.Name("NotchHero.languageChanged")
+    static let notchHeroLanguageChanged = Notification.Name("VibeHero.languageChanged")
 }
 
 enum AppLanguage: String, CaseIterable {
@@ -9,7 +9,7 @@ enum AppLanguage: String, CaseIterable {
     case simplifiedChinese = "zh-Hans"
     case japanese = "ja"
 
-    private static let defaultsKey = "NotchHero.language"
+    private static let defaultsKey = "VibeHero.language"
 
     var displayName: String {
         switch self {
@@ -43,7 +43,7 @@ enum AppLanguage: String, CaseIterable {
 
 enum L10nKey: String, CaseIterable {
     case showNotch
-    case quitNotchHero
+    case quitVibeHero
     case settingsTitle
     case language
     case heroRole
@@ -320,7 +320,7 @@ enum L10n {
     private static let translations: [AppLanguage: [L10nKey: String]] = [
         .english: [
             .showNotch: "Show Notch",
-            .quitNotchHero: "Quit Vibe Hero",
+            .quitVibeHero: "Quit Vibe Hero",
             .settingsTitle: "Vibe Hero Settings",
             .language: "Language",
             .heroRole: "Hero Role",
@@ -585,7 +585,7 @@ enum L10n {
         ],
         .simplifiedChinese: [
             .showNotch: "显示刘海",
-            .quitNotchHero: "退出 Vibe Hero",
+            .quitVibeHero: "退出 Vibe Hero",
             .settingsTitle: "Vibe Hero 设置",
             .language: "语言",
             .heroRole: "英雄角色",
@@ -850,7 +850,7 @@ enum L10n {
         ],
         .japanese: [
             .showNotch: "ノッチを表示",
-            .quitNotchHero: "Vibe Hero を終了",
+            .quitVibeHero: "Vibe Hero を終了",
             .settingsTitle: "Vibe Hero 設定",
             .language: "言語",
             .heroRole: "ヒーロー役割",

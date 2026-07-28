@@ -133,9 +133,9 @@ enum HeroSkill: String, CaseIterable {
 }
 
 enum SkillProgress {
-    private static let heroLevelKey = "NotchHero.currentHeroLevel"
-    private static let skillKeyPrefix = "NotchHero.skill."
-    private static let autoCastKeyPrefix = "NotchHero.skillAutoCast."
+    private static let heroLevelKey = "VibeHero.currentHeroLevel"
+    private static let skillKeyPrefix = "VibeHero.skill."
+    private static let autoCastKeyPrefix = "VibeHero.skillAutoCast."
 
     static func saveHeroLevel(_ level: Int) {
         UserDefaults.standard.set(max(0, level), forKey: heroLevelKey)

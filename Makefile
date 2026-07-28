@@ -1,4 +1,4 @@
-APP_NAME := NotchHero
+APP_NAME := VibeHero
 PRODUCT_NAME := Vibe Hero
 BUNDLE_ID := com.local.vibe-hero
 APP_BUNDLE := .build/app/$(PRODUCT_NAME).app

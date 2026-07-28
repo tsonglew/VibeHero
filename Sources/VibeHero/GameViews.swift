@@ -133,7 +133,7 @@ enum BattleBackdrop: String, CaseIterable {
     case sunsetDunes
     case neonCity
 
-    private static let defaultsKey = "NotchHero.backdrop"
+    private static let defaultsKey = "VibeHero.backdrop"
 
     var name: String {
         switch self {

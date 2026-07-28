@@ -408,8 +408,8 @@ enum SkillTreeData {
 // MARK: - Skill Tree Progress
 
 enum SkillTreeProgress {
-    private static let nodeKeyPrefix = "NotchHero.skillTree.node."
-    private static let skillPointsKey = "NotchHero.skillTree.availablePoints"
+    private static let nodeKeyPrefix = "VibeHero.skillTree.node."
+    private static let skillPointsKey = "VibeHero.skillTree.availablePoints"
 
     static func level(for nodeID: String) -> Int {
         UserDefaults.standard.integer(forKey: nodeKeyPrefix + nodeID)

@@ -1362,7 +1362,7 @@ private enum GameStats {
 }
 
 private enum StageTracker {
-    private static let totalKillsKey = "NotchHero.totalKills"
+    private static let totalKillsKey = "VibeHero.totalKills"
 
     static func loadTotalKills() -> Int {
         max(0, UserDefaults.standard.integer(forKey: totalKillsKey))
@@ -1402,8 +1402,8 @@ enum StageProgress {
 }
 
 private enum HeroExperience {
-    private static let totalXPKey = "NotchHero.heroTotalXP"
-    private static let migrationKey = "NotchHero.heroXPInitializedFromLevel"
+    private static let totalXPKey = "VibeHero.heroTotalXP"
+    private static let migrationKey = "VibeHero.heroXPInitializedFromLevel"
 
     static func loadTotalXP() -> Int {
         if UserDefaults.standard.object(forKey: totalXPKey) != nil {
@@ -1482,7 +1482,7 @@ private enum ExperienceCurve {
 }
 
 enum ScreenPinning {
-    private static let defaultsKey = "NotchHero.pinnedDisplayID"
+    private static let defaultsKey = "VibeHero.pinnedDisplayID"
 
     static func load() -> Int? {
         let value = UserDefaults.standard.integer(forKey: defaultsKey)
@@ -1525,7 +1525,7 @@ enum HeroRole: String, CaseIterable {
     case qa
     case other
 
-    private static let defaultsKey = "NotchHero.selectedRole"
+    private static let defaultsKey = "VibeHero.selectedRole"
 
     var label: String {
         switch self {

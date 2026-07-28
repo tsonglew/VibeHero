@@ -1,7 +1,7 @@
 import AppKit
 
 enum FullScreenHidePreference {
-    private static let defaultsKey = "NotchHero.hideInFullScreen"
+    private static let defaultsKey = "VibeHero.hideInFullScreen"
 
     static func load() -> Bool {
         UserDefaults.standard.bool(forKey: defaultsKey)

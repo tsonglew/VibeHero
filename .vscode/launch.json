@@ -5,20 +5,20 @@
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:notch-hero}",
-            "name": "Debug NotchHero",
-            "target": "NotchHero",
+            "name": "Debug VibeHero",
+            "target": "VibeHero",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug NotchHero"
+            "preLaunchTask": "swift: Build Debug VibeHero"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:notch-hero}",
-            "name": "Release NotchHero",
-            "target": "NotchHero",
+            "name": "Release VibeHero",
+            "target": "VibeHero",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release NotchHero"
+            "preLaunchTask": "swift: Build Release VibeHero"
         }
     ]
 }

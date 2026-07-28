@@ -1,5 +1,23 @@
 import AppKit
 
+/// One-time rename of the persisted `NotchHero.*` UserDefaults keys to
+/// `VibeHero.*`, from before the app settled on the Vibe Hero name. Without
+/// this, existing players would lose kills, XP, gold, equipment and settings
+/// on the first launch of a renamed build. Safe to delete once installs from
+/// that era no longer matter.
+enum LegacyDefaultsMigration {
+    static func run() {
+        let defaults = UserDefaults.standard
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix("NotchHero.") {
+            let newKey = "VibeHero." + key.dropFirst("NotchHero.".count)
+            if defaults.object(forKey: newKey) == nil {
+                defaults.set(value, forKey: newKey)
+            }
+            defaults.removeObject(forKey: key)
+        }
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchWindow: NotchWindow?
@@ -8,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LegacyDefaultsMigration.run()
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
         showNotchWindow()
@@ -37,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         let showItem = NSMenuItem(title: L10n.text(.showNotch), action: #selector(showNotchFromMenu), keyEquivalent: "s")
-        let quitItem = NSMenuItem(title: L10n.text(.quitNotchHero), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L10n.text(.quitVibeHero), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(showItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(quitItem)
@@ -108,6 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func languageChanged() {
         showMenuItem?.title = L10n.text(.showNotch)
-        quitMenuItem?.title = L10n.text(.quitNotchHero)
+        quitMenuItem?.title = L10n.text(.quitVibeHero)
     }
 }

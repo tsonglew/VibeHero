@@ -134,9 +134,9 @@ struct LootDrop {
 }
 
 enum ItemSystem {
-    private static let goldKey = "NotchHero.inventory.gold"
-    private static let powerBoostExpiryKey = "NotchHero.buff.powerBoostExpiry"
-    private static let equipmentKeyPrefix = "NotchHero.equipment."
+    private static let goldKey = "VibeHero.inventory.gold"
+    private static let powerBoostExpiryKey = "VibeHero.buff.powerBoostExpiry"
+    private static let equipmentKeyPrefix = "VibeHero.equipment."
 
     static let powerBoostMultiplier: CGFloat = 1.25
     static let powerBoostDuration: TimeInterval = 60

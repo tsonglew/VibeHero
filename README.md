@@ -149,7 +149,7 @@ layers (far silhouettes, near silhouettes, ground marks).
 
 ### Settings
 
-Five tabs, all persisted in `UserDefaults` under `NotchHero.*` keys:
+Five tabs, all persisted in `UserDefaults` under `VibeHero.*` keys:
 
 | Tab | Contents |
 |-----|----------|
@@ -222,10 +222,10 @@ SPM dependencies, no code generation.
 ### Commands
 
 ```sh
-make run      # swift run NotchHero
+make run      # swift run VibeHero
 make dev      # run + auto-restart on any change under Package.swift / Sources
-make build    # debug build   → .build/arm64-apple-macosx/debug/NotchHero
-make release  # release build → .build/release/NotchHero
+make build    # debug build   → .build/arm64-apple-macosx/debug/VibeHero
+make release  # release build → .build/release/VibeHero
 make app      # app bundle    → ".build/app/Vibe Hero.app"
 make install  # copy the bundle to /Applications
 make clean    # swift package clean
@@ -239,7 +239,7 @@ make run DEVELOPER_DIR=/path/to/Xcode.app/Contents/Developer
 ```
 
 The app is `LSUIElement`, so it never appears in the Dock. Use the menu bar icon to re-show
-the notch or quit. `pkill -f 'Vibe Hero'` kills a bundled instance; `pkill -f NotchHero` kills
+the notch or quit. `pkill -f 'Vibe Hero'` kills a bundled instance; `pkill -f VibeHero` kills
 a `swift run` one.
 
 ### Source layout
@@ -273,7 +273,7 @@ a `swift run` one.
 - 4-space indent, K&R braces, `private` by default, no force-unwraps in view code.
   There is **no** SwiftLint/SwiftFormat config — don't run `swift-format` with its defaults,
   it will reformat the tree to 2-space indent.
-- Persisted state uses `UserDefaults` keys prefixed `NotchHero.` (`totalKills`, `heroTotalXP`,
+- Persisted state uses `UserDefaults` keys prefixed `VibeHero.` (`totalKills`, `heroTotalXP`,
   `equipment.*`, `skill.*`, `skillTree.node.*`, `backdrop`, `language`, `pinnedDisplayID`,
   `hideInFullScreen`, `inventory.gold`, …). Deleting them resets a save.
 - Comments explain *why*, especially where a fix encodes a platform quirk. Several of the
@@ -328,7 +328,7 @@ Animations are hard to review from a running app. The workflow that works:
 | New backdrop | `BattleBackdrop` in `GameViews.swift`: a `draw…()` painter plus a `scrollSpecs(for:)` entry |
 | New role | `HeroRole` in `NotchContentView.swift` + strings |
 | New token source | a reader in `TokenUsage.swift`, an installer case in `TokenHookInstaller.swift`, and an `IDEType` case in `SessionMonitor.swift` |
-| New setting | the matching tab in `NotchSettingsWindow.swift`, a `NotchHero.*` default, and strings |
+| New setting | the matching tab in `NotchSettingsWindow.swift`, a `VibeHero.*` default, and strings |
 
 ---
 
