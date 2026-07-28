@@ -18,9 +18,33 @@ back.
 - Reads **only** local JSONL logs — timestamps and token counters, nothing else
 - Accessory app: no Dock icon, lives in the notch and the menu bar
 
+## Install
+
+**Homebrew** — builds from source on your machine, so macOS never shows a Gatekeeper
+prompt:
+
 ```sh
-make run      # hover the notch to expand
+brew install tsonglew/tap/vibe-hero
+cp -R "$(brew --prefix vibe-hero)/Vibe Hero.app" /Applications
+open "/Applications/Vibe Hero.app"
 ```
+
+Upgrades ride along with `brew upgrade`. First install takes a minute or two — it compiles
+the package locally.
+
+**Manual download** — grab `Vibe-Hero-v0.1.0.zip` from
+[Releases](https://github.com/tsonglew/VibeHero/releases), unzip, and drag the app to
+`/Applications`. The build is unsigned, and macOS quarantines anything downloaded in a
+browser, so the first double-click is blocked. Remove the quarantine mark once:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Vibe Hero.app"
+```
+
+(or System Settings → Privacy & Security → **Open Anyway** after the first attempt.)
+
+Both paths are local-only: the app reads token counters from local agent logs and talks to
+nothing on the network.
 
 ---
 
