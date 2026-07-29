@@ -90,6 +90,15 @@ If today has no real usage data anywhere, the HUD shows `NO DATA` — nothing is
   from stale transcript directories.
 
 <p align="center">
+  <img src="docs/images/vibe-hero-hud-expanded.png" alt="Expanded battle HUD: the hero facing a Cache Golem over the Neon City backdrop, with hero HP, XP, golem HP, token rate and skill energy" width="640">
+  <br>
+  <em>Expanded, hovering the notch.</em>&ensp;&ensp;
+  <img src="docs/images/vibe-hero-hud-collpased.png" alt="Collapsed notch pill showing hero level, today's token total, HP bar and XP bar" width="320">
+  <br>
+  <em>Collapsed, the resting pill.</em>
+</p>
+
+<p align="center">
   <img src="docs/images/vibe-hero-settings-sessions.png" alt="Sessions list with four rows tagged Claude Code, Codex, OpenCode and Kimi Code, each showing active or idle state and a token count" width="740">
   <br>
   <em>The same list, shown in <strong>Settings → Sessions</strong>: one row per open agent project,<br>badged by agent, with live/idle state and today's tokens.</em>
@@ -177,7 +186,9 @@ screen; push the pointer against the top edge to peek it back out, like the menu
 ### Token sources & privacy
 
 Nothing leaves your machine. The scanner extracts timestamps and token counters only — no
-prompts, no completions.
+prompts, no completions. The whole app is a few thousand lines of dependency-free Swift, and
+`Sources/VibeHero/TokenUsage.swift` is the only file that reads those logs, so the claim is
+easy to audit.
 
 | Source | Path |
 |--------|------|
@@ -204,6 +215,23 @@ double-counting. OpenCode and Kimi Code are hook/MCP-only today.
   <br>
   <em><strong>Tools</strong> — one-click hook installers per agent. Installing rewrites that agent's<br>own config, so restart or reopen the tool afterwards.</em>
 </p>
+
+### Removing the token hooks
+
+Everything the installer adds sits next to the config it modifies and is marked with
+`vibe-hero`. To uninstall by hand:
+
+| Agent | Remove this |
+|-------|-------------|
+| Claude Code | the `PostToolUse` / `Stop` / `SessionEnd` hook entries containing `vibe-hero-token-hook` in `~/.claude/settings.json` |
+| Codex | the hook entries containing `vibe-hero-token-hook` in `~/.codex/hooks.json`; optionally drop `codex_hooks = true` from `~/.codex/config.toml` |
+| OpenCode | `~/.config/opencode/plugins/vibe-hero-token.js`, plus its path in the `plugin` array of `~/.config/opencode/config.json` |
+| Kimi Code | `~/.vibe-hero/mcp/kimi-token-server.js`, plus the `[mcp.servers.kimi-token-server]` block in `~/.kimi-code/config.toml` |
+
+Once no agent references it any more, the shared script and its event log can go too:
+`~/.vibe-hero/hooks/vibe-hero-token-hook` and `~/.vibe-hero/token-events.jsonl`. The app
+keeps working without hooks — Claude Code and Codex still have their primary JSONL logs;
+OpenCode and Kimi Code simply go quiet.
 
 ### Localization
 
@@ -236,6 +264,13 @@ change — an auto-restart loop, not Swift hot reload. To point Swift at another
 
 ```sh
 make run DEVELOPER_DIR=/path/to/Xcode.app/Contents/Developer
+```
+
+Cutting a release is one command — it bumps the version, tags, pushes, updates the Homebrew
+tap formula, and creates the GitHub Release with the zipped bundle:
+
+```sh
+scripts/release.sh 0.1.2 [notes.md]
 ```
 
 The app is `LSUIElement`, so it never appears in the Dock. Use the menu bar icon to re-show
