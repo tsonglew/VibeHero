@@ -25,6 +25,8 @@ enum IDEType: String, CaseIterable, Sendable {
     case codex = "Codex"
     case opencode = "OpenCode"
     case kimi = "Kimi"
+    case openclaw = "OpenClaw"
+    case hermes = "Hermes"
 
     /// Same wording as the hook installer uses, so a session row and the tools
     /// tab call the same agent by the same name.
@@ -34,6 +36,8 @@ enum IDEType: String, CaseIterable, Sendable {
         case .codex: "Codex"
         case .opencode: "OpenCode"
         case .kimi: "Kimi Code"
+        case .openclaw: "OpenClaw"
+        case .hermes: "Hermes"
         }
     }
 
@@ -43,6 +47,8 @@ enum IDEType: String, CaseIterable, Sendable {
         case .codex: "💻"
         case .opencode: "🔧"
         case .kimi: "🌙"
+        case .openclaw: "🦞"
+        case .hermes: "📬"
         }
     }
 
@@ -52,6 +58,8 @@ enum IDEType: String, CaseIterable, Sendable {
         case .codex: NSColor(red: 0.4, green: 0.6, blue: 1.0, alpha: 1)
         case .opencode: NSColor(red: 0.95, green: 0.6, blue: 0.2, alpha: 1)
         case .kimi: NSColor(red: 0.6, green: 0.4, blue: 0.95, alpha: 1)
+        case .openclaw: NSColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1)
+        case .hermes: NSColor(red: 0.3, green: 0.8, blue: 0.5, alpha: 1)
         }
     }
 }
@@ -435,6 +443,8 @@ final class SessionMonitor {
         switch source.lowercased() {
         case "opencode": .opencode
         case "kimi": .kimi
+        case "openclaw": .openclaw
+        case "hermes": .hermes
         default: nil
         }
     }

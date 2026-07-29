@@ -5,6 +5,8 @@ enum CodingToolHook: String, CaseIterable {
     case codex
     case opencode
     case kimi
+    case openclaw
+    case hermes
 
     var displayName: String {
         switch self {
@@ -12,6 +14,8 @@ enum CodingToolHook: String, CaseIterable {
         case .codex: "Codex"
         case .opencode: "OpenCode"
         case .kimi: "Kimi Code"
+        case .openclaw: "OpenClaw"
+        case .hermes: "Hermes"
         }
     }
 
@@ -21,6 +25,8 @@ enum CodingToolHook: String, CaseIterable {
         case .codex: "codex"
         case .opencode: "opencode"
         case .kimi: "kimi"
+        case .openclaw: "openclaw"
+        case .hermes: "hermes"
         }
     }
 }
@@ -65,6 +71,10 @@ enum TokenHookInstaller {
             try installOpenCodeHook()
         case .kimi:
             try installKimiHook()
+        case .openclaw:
+            try installOpenClawHook()
+        case .hermes:
+            try installHermesHook()
         }
     }
 
@@ -99,6 +109,20 @@ enum TokenHookInstaller {
             return TokenHookInstallState(
                 isInstalled: installed,
                 detail: installed ? L10n.text(.hookInstalledDetail) : L10n.text(.hookKimiDetail)
+            )
+        case .openclaw:
+            let hooksURL = home.appendingPathComponent(".openclaw/hooks/vibe-hero-token.sh")
+            let installed = manager.fileExists(atPath: hooksURL.path)
+            return TokenHookInstallState(
+                isInstalled: installed,
+                detail: installed ? L10n.text(.hookInstalledDetail) : "Adds a hook script to ~/.openclaw/hooks."
+            )
+        case .hermes:
+            let hooksURL = home.appendingPathComponent(".hermes/hooks/vibe-hero-token.sh")
+            let installed = manager.fileExists(atPath: hooksURL.path)
+            return TokenHookInstallState(
+                isInstalled: installed,
+                detail: installed ? L10n.text(.hookInstalledDetail) : "Adds a hook script to ~/.hermes/hooks."
             )
         }
     }
@@ -176,6 +200,38 @@ enum TokenHookInstaller {
         try writeJSON(root, to: configURL)
     }
 
+    private static func installOpenClawHook() throws {
+        let hooksRoot = home.appendingPathComponent(".openclaw/hooks")
+        let hookURL = hooksRoot.appendingPathComponent("vibe-hero-token.sh")
+        
+        try manager.createDirectory(at: hooksRoot, withIntermediateDirectories: true)
+        
+        let script = """
+        #!/bin/sh
+        # Vibe Hero Token Hook for OpenClaw
+        "\(hookCommand)" openclaw
+        """
+        
+        try script.write(to: hookURL, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookURL.path)
+    }
+    
+    private static func installHermesHook() throws {
+        let hooksRoot = home.appendingPathComponent(".hermes/hooks")
+        let hookURL = hooksRoot.appendingPathComponent("vibe-hero-token.sh")
+        
+        try manager.createDirectory(at: hooksRoot, withIntermediateDirectories: true)
+        
+        let script = """
+        #!/bin/sh
+        # Vibe Hero Token Hook for Hermes
+        "\(hookCommand)" hermes
+        """
+        
+        try script.write(to: hookURL, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookURL.path)
+    }
+    
     private static func installKimiHook() throws {
         // Kimi Code uses MCP (Model Context Protocol). We install an MCP server
         // that intercepts LLM responses and logs token usage.

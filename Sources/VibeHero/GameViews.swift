@@ -1994,10 +1994,6 @@ final class BattleSceneView: NSView {
             return
         }
 
-        let attackColor = heroRole.attackColor
-        let clampedIntensity = min(max(intensity, 0), 3)
-        let effectTier = min(max(skillLoadout.effectTier + clampedIntensity * 2, 0), 14)
-
         if isCrit {
             showFloatingText(
                 "\(L10n.text(.critLabel)) -\(damageText)",
@@ -2007,38 +2003,185 @@ final class BattleSceneView: NSView {
                 style: .crit
             )
         } else {
-            showFloatingText("-\(damageText)", color: attackColor, anchor: .monster)
+            showFloatingText("-\(damageText)", color: NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: 1.0), anchor: .monster)
         }
 
-        playProjectile(color: attackColor, tier: effectTier)
-        if clampedIntensity >= 1 {
-            playVolley(color: attackColor, tier: effectTier, count: clampedIntensity + 2)
+        // Energy laser attack with synchronized hit effects
+        playShockwave(isCrit: isCrit)
+    }
+    
+    // MARK: - Energy Laser Attack Effect
+    
+    private let laserCoreLayer = CAShapeLayer()
+    private let laserGlowLayer = CAShapeLayer()
+    private let laserFlickerLayers = (0..<4).map { _ in CAShapeLayer() }
+    private let impactBurstLayer = CAShapeLayer()
+    
+    private func playShockwave(isCrit: Bool) {
+        let heroPos = CGPoint(x: heroView.frame.maxX - 2, y: heroView.frame.midY)
+        let monsterPos = CGPoint(x: monsterVisualFrame.minX + 4, y: monsterVisualFrame.midY)
+        let now = CACurrentMediaTime()
+        
+        // Create jagged laser path with energy fluctuation
+        let laserPath = CGMutablePath()
+        laserPath.move(to: heroPos)
+        
+        // Add jagged points for energy feel
+        let segments = 6
+        let dx = (monsterPos.x - heroPos.x) / CGFloat(segments)
+        for i in 1...segments {
+            let x = heroPos.x + dx * CGFloat(i)
+            let jitter = i == segments ? 0 : CGFloat.random(in: -3...3)
+            let y = heroPos.y + (monsterPos.y - heroPos.y) * CGFloat(i) / CGFloat(segments) + jitter
+            laserPath.addLine(to: CGPoint(x: x, y: y))
         }
-        playImpact(color: attackColor, tier: effectTier)
-        playBasicSlash(color: attackColor, tier: effectTier)
-        playMonsterHitFlash()
-        playHitSparks(color: attackColor, intense: isCrit || clampedIntensity >= 2)
-        playFlash(color: attackColor.withAlphaComponent(
-            min(0.5, (isCrit ? 0.30 : 0.14 + CGFloat(min(effectTier, 6)) * 0.015) + CGFloat(clampedIntensity) * 0.05)
-        ))
-        // The hero's own swing: the tell that an attack fired, independent of
-        // whatever projectile or impact art the current tier adds on top.
-        heroView.playAttackTell(direction: 1, reach: isCrit ? 9 : 7)
-        playAttackSwing(
-            on: heroSwingLayer,
-            from: heroView.frame,
-            direction: 1,
-            color: attackColor,
-            lineWidth: isCrit ? 5 : 4
-        )
-        if isCrit {
-            shake(layer: monsterView.layer, distance: 7 + CGFloat(clampedIntensity), duration: 0.3)
-            shake(layer: layer, distance: 2.5, duration: 0.18)
-        } else if clampedIntensity >= 2 {
-            shake(layer: monsterView.layer, distance: 5.5, duration: 0.24)
-        } else {
-            shakeMonster()
+        
+        // 1. Outer glow (thicker, translucent)
+        laserGlowLayer.removeAllAnimations()
+        laserGlowLayer.path = laserPath
+        laserGlowLayer.strokeColor = NSColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 0.4).cgColor
+        laserGlowLayer.lineWidth = isCrit ? 12 : 8
+        laserGlowLayer.lineCap = .round
+        laserGlowLayer.shadowColor = NSColor(red: 0.4, green: 0.8, blue: 1.0, alpha: 1.0).cgColor
+        laserGlowLayer.shadowRadius = 10
+        laserGlowLayer.shadowOpacity = 0.7
+        laserGlowLayer.opacity = 0
+        
+        if laserGlowLayer.superlayer == nil {
+            effectsLayer?.addSublayer(laserGlowLayer)
         }
+        
+        // 2. Core beam (bright white-blue)
+        laserCoreLayer.removeAllAnimations()
+        laserCoreLayer.path = laserPath
+        laserCoreLayer.strokeColor = NSColor(red: 0.9, green: 0.95, blue: 1.0, alpha: 0.95).cgColor
+        laserCoreLayer.lineWidth = isCrit ? 4 : 3
+        laserCoreLayer.lineCap = .round
+        laserCoreLayer.shadowColor = NSColor.white.cgColor
+        laserCoreLayer.shadowRadius = 4
+        laserCoreLayer.shadowOpacity = 0.9
+        laserCoreLayer.opacity = 0
+        
+        if laserCoreLayer.superlayer == nil {
+            effectsLayer?.addSublayer(laserCoreLayer)
+        }
+        
+        // Flash animation for main laser
+        let laserFlash = CAKeyframeAnimation(keyPath: "opacity")
+        laserFlash.values = [0, 1, 1, 0]
+        laserFlash.keyTimes = [0, 0.1, 0.6, 1]
+        laserFlash.duration = 0.2
+        
+        let glowFlash = CAKeyframeAnimation(keyPath: "opacity")
+        glowFlash.values = [0, 0.8, 0.8, 0]
+        glowFlash.keyTimes = [0, 0.1, 0.6, 1]
+        glowFlash.duration = 0.22
+        
+        laserCoreLayer.add(laserFlash, forKey: "flash")
+        laserGlowLayer.add(glowFlash, forKey: "flash")
+        
+        // 3. Energy flickers (short arcs along the beam)
+        for (index, flicker) in laserFlickerLayers.enumerated() {
+            let t = CGFloat(index + 1) / CGFloat(laserFlickerLayers.count + 1)
+            let baseX = heroPos.x + (monsterPos.x - heroPos.x) * t
+            let baseY = heroPos.y + (monsterPos.y - heroPos.y) * t
+            
+            // Small arc flicker
+            let flickerPath = CGMutablePath()
+            let arcRadius: CGFloat = 6
+            let startAngle = CGFloat.random(in: 0...(2 * .pi))
+            flickerPath.addArc(
+                center: CGPoint(x: baseX, y: baseY),
+                radius: arcRadius,
+                startAngle: startAngle,
+                endAngle: startAngle + .pi * 0.6,
+                clockwise: false
+            )
+            
+            flicker.removeAllAnimations()
+            flicker.path = flickerPath
+            flicker.strokeColor = NSColor(red: 0.6, green: 0.9, blue: 1.0, alpha: 0.8).cgColor
+            flicker.lineWidth = 2
+            flicker.lineCap = .round
+            flicker.opacity = 0
+            
+            if flicker.superlayer == nil {
+                effectsLayer?.addSublayer(flicker)
+            }
+            
+            let flickerFlash = CABasicAnimation(keyPath: "opacity")
+            flickerFlash.fromValue = 1
+            flickerFlash.toValue = 0
+            flickerFlash.duration = 0.12
+            flickerFlash.beginTime = now + Double(index) * 0.02
+            
+            flicker.add(flickerFlash, forKey: "flash")
+        }
+        
+        // 4. Impact burst at monster
+        let burstSize: CGFloat = isCrit ? 18 : 12
+        let burstPath = CGMutablePath()
+        // Electric spark burst
+        for i in 0..<6 {
+            let angle = CGFloat(i) * .pi / 3 + CGFloat.random(in: -0.2...0.2)
+            let r1 = burstSize * CGFloat.random(in: 0.8...1.2)
+            let r2 = burstSize * 0.3
+            burstPath.move(to: CGPoint(x: r2 * cos(angle), y: r2 * sin(angle)))
+            burstPath.addLine(to: CGPoint(x: r1 * cos(angle), y: r1 * sin(angle)))
+        }
+        
+        impactBurstLayer.removeAllAnimations()
+        impactBurstLayer.path = burstPath
+        impactBurstLayer.position = monsterPos
+        impactBurstLayer.strokeColor = NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 0.9).cgColor
+        impactBurstLayer.fillColor = nil
+        impactBurstLayer.lineWidth = 2
+        impactBurstLayer.lineCap = .round
+        impactBurstLayer.shadowColor = NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: 1.0).cgColor
+        impactBurstLayer.shadowRadius = 8
+        impactBurstLayer.shadowOpacity = 0.9
+        impactBurstLayer.opacity = 0
+        
+        if impactBurstLayer.superlayer == nil {
+            effectsLayer?.addSublayer(impactBurstLayer)
+        }
+        
+        let burstFlash = CABasicAnimation(keyPath: "opacity")
+        burstFlash.fromValue = 1
+        burstFlash.toValue = 0
+        burstFlash.duration = 0.12
+        burstFlash.beginTime = now + 0.08
+        
+        let burstScale = CABasicAnimation(keyPath: "transform.scale")
+        burstScale.fromValue = 0.6
+        burstScale.toValue = 1.2
+        burstScale.duration = 0.12
+        burstScale.beginTime = now + 0.08
+        
+        impactBurstLayer.add(burstFlash, forKey: "flash")
+        impactBurstLayer.add(burstScale, forKey: "scale")
+        
+        // 5. Monster hit flash and shake - synchronized with laser arrival (0.08s)
+        placeEffect(monsterHitFlashLayer, frame: monsterVisualFrame.insetBy(dx: -2, dy: -2))
+        monsterHitFlashLayer.removeAllAnimations()
+        let hitFlash = CAKeyframeAnimation(keyPath: "opacity")
+        hitFlash.values = [0.55, 0]
+        hitFlash.keyTimes = [0, 1]
+        hitFlash.duration = 0.14
+        hitFlash.beginTime = now + 0.08
+        hitFlash.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        monsterHitFlashLayer.opacity = 0
+        monsterHitFlashLayer.add(hitFlash, forKey: "monsterHitWhiteFlash")
+        
+        // Monster shake - synchronized
+        let shakeDistance: CGFloat = isCrit ? 7 : 4
+        let shakeDuration: CFTimeInterval = isCrit ? 0.3 : 0.22
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -shakeDistance, shakeDistance * 0.7, -shakeDistance * 0.4, 0]
+        shake.duration = shakeDuration
+        shake.beginTime = now + 0.08
+        shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        monsterView.layer?.add(shake, forKey: "monsterHitShake")
     }
 
     private func playBasicSlash(color: NSColor, tier: Int) {
@@ -2157,12 +2300,12 @@ final class BattleSceneView: NSView {
         shakeMonster()
     }
 
-    func playMonsterAttack(damage: Double) {
+    func playMonsterAttack(damage: Int) {
         guard rendersCombatEffects else {
             return
         }
         showFloatingText(
-            L10n.string(.hpDamageDecimal, damage),
+            L10n.string(.hpDamage, damage),
             color: NSColor(red: 1.0, green: 0.36, blue: 0.32, alpha: 1.0),
             anchor: .hero
         )
@@ -2182,70 +2325,192 @@ final class BattleSceneView: NSView {
         )
     }
 
+    // Wolf claw scratch layers
+    private let clawGlowLayers = (0..<3).map { _ in CAShapeLayer() }
+    private let clawCoreLayers = (0..<3).map { _ in CAShapeLayer() }
+    private let clawSparkLayers = (0..<6).map { _ in CAShapeLayer() }
+    
     private func playMonsterProjectile() {
-        // Three parallel claw marks raked from the monster toward the hero, then
-        // a flash where they land. Every layer here is reused: a monster attack
-        // allocates nothing and never adds to or removes from the layer tree.
-        let clawColor = NSColor(red: 1.0, green: 0.25, blue: 0.2, alpha: 0.9)
-        let start = CGPoint(x: monsterVisualFrame.minX - 8, y: monsterVisualFrame.midY)
-        // The rake ends *on* the hero, not at the gap in front of it: with the
-        // monster standing this close, stopping at the hero's edge left the marks
-        // as three specks nobody could read.
-        let end = CGPoint(x: heroView.frame.midX + 4, y: heroView.frame.midY)
+        // Wolf claw slash - fierce energy claw marks raking toward hero
+        let clawColor = monsterKind.hpColor
         let now = CACurrentMediaTime()
-
-        for (index, claw) in monsterClawLayers.enumerated() {
-            let offset = CGFloat(index - 1) * 6
-
-            // Claw path: curved slash from monster to hero
+        
+        // Start from monster's claw position (front paw)
+        let clawStart = CGPoint(x: monsterVisualFrame.minX - 2, y: monsterVisualFrame.midY - 4)
+        let heroPos = CGPoint(x: heroView.frame.midX, y: heroView.frame.midY)
+        
+        // Direction toward hero
+        let dx = heroPos.x - clawStart.x
+        let dy = heroPos.y - clawStart.y
+        let baseAngle = atan2(dy, dx)
+        
+        // Three claw slashes with natural spread (like wolf paw)
+        let clawSpread: [CGFloat] = [-0.25, 0, 0.25] // Radians spread
+        let clawLengths: [CGFloat] = [32, 38, 30]   // Varying lengths
+        
+        for index in 0..<3 {
+            let angle = baseAngle + clawSpread[index]
+            let length = clawLengths[index]
+            
+            // Create fierce claw path - jagged, aggressive curve
             let clawPath = CGMutablePath()
-            let midX = (start.x + end.x) / 2
-            let controlY = start.y - 15 + offset
-
-            clawPath.move(to: CGPoint(x: start.x, y: start.y + offset))
-            clawPath.addQuadCurve(
-                to: CGPoint(x: end.x, y: end.y + offset),
-                control: CGPoint(x: midX, y: controlY)
+            let startPoint = clawStart
+            
+            // End point with some randomness for wild feel
+            let endPoint = CGPoint(
+                x: startPoint.x + length * cos(angle) + CGFloat.random(in: -3...3),
+                y: startPoint.y + length * sin(angle) + CGFloat.random(in: -2...2)
             )
-
-            claw.removeAllAnimations()
-            claw.path = clawPath
-            claw.strokeColor = clawColor.cgColor
-
-            let stroke = CABasicAnimation(keyPath: "strokeEnd")
-            stroke.fromValue = 0
-            stroke.toValue = 1
-            stroke.duration = 0.15
-            stroke.beginTime = now + Double(index) * 0.03
-            stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-            // Held at 1 until the stagger of this mark starts, then faded out.
-            // The model opacity stays 0, so nothing lingers once it ends.
-            let fade = CAKeyframeAnimation(keyPath: "opacity")
-            fade.values = [1, 1, 0]
-            fade.keyTimes = [0, 0.35, 1]
-            fade.duration = 0.35
-            fade.beginTime = now + Double(index) * 0.03
-
-            claw.add(stroke, forKey: "clawStroke")
-            claw.add(fade, forKey: "clawFade")
+            
+            // Control points for aggressive S-curve (like claw raking)
+            let ctrl1 = CGPoint(
+                x: startPoint.x + length * 0.3 * cos(angle - 0.3),
+                y: startPoint.y + length * 0.3 * sin(angle - 0.3)
+            )
+            let ctrl2 = CGPoint(
+                x: startPoint.x + length * 0.7 * cos(angle + 0.2),
+                y: startPoint.y + length * 0.7 * sin(angle + 0.2)
+            )
+            
+            clawPath.move(to: startPoint)
+            clawPath.addCurve(to: endPoint, control1: ctrl1, control2: ctrl2)
+            
+            // Glow layer (outer, thicker)
+            let glow = clawGlowLayers[index]
+            glow.removeAllAnimations()
+            glow.path = clawPath
+            glow.strokeColor = clawColor.withAlphaComponent(0.5).cgColor
+            glow.lineWidth = 8 - CGFloat(index)
+            glow.lineCap = .round
+            glow.shadowColor = clawColor.cgColor
+            glow.shadowRadius = 8
+            glow.shadowOpacity = 0.8
+            glow.opacity = 0
+            
+            if glow.superlayer == nil {
+                effectsLayer?.addSublayer(glow)
+            }
+            
+            // Core layer (inner, bright)
+            let core = clawCoreLayers[index]
+            core.removeAllAnimations()
+            core.path = clawPath
+            core.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            core.lineWidth = 3 - CGFloat(index) * 0.5
+            core.lineCap = .round
+            core.shadowColor = clawColor.cgColor
+            core.shadowRadius = 4
+            core.shadowOpacity = 0.9
+            core.opacity = 0
+            
+            if core.superlayer == nil {
+                effectsLayer?.addSublayer(core)
+            }
+            
+            // Animate with staggered timing (claws rake in sequence)
+            let delay = Double(index) * 0.05
+            
+            let glowStroke = CABasicAnimation(keyPath: "strokeEnd")
+            glowStroke.fromValue = 0
+            glowStroke.toValue = 1
+            glowStroke.duration = 0.1
+            glowStroke.beginTime = now + delay
+            glowStroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            
+            let glowFade = CAKeyframeAnimation(keyPath: "opacity")
+            glowFade.values = [0, 1, 1, 0]
+            glowFade.keyTimes = [0, 0.2, 0.6, 1]
+            glowFade.duration = 0.3
+            glowFade.beginTime = now + delay
+            
+            let coreStroke = CABasicAnimation(keyPath: "strokeEnd")
+            coreStroke.fromValue = 0
+            coreStroke.toValue = 1
+            coreStroke.duration = 0.08
+            coreStroke.beginTime = now + delay + 0.02
+            coreStroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            
+            let coreFade = CAKeyframeAnimation(keyPath: "opacity")
+            coreFade.values = [0, 1, 1, 0]
+            coreFade.keyTimes = [0, 0.15, 0.5, 1]
+            coreFade.duration = 0.25
+            coreFade.beginTime = now + delay + 0.02
+            
+            glow.add(glowStroke, forKey: "stroke")
+            glow.add(glowFade, forKey: "fade")
+            core.add(coreStroke, forKey: "stroke")
+            core.add(coreFade, forKey: "fade")
         }
-
-        // Impact flash on hero
+        
+        // Energy sparks flying from claw impact
+        for (index, spark) in clawSparkLayers.enumerated() {
+            let size = CGFloat.random(in: 2...5)
+            let sparkAngle = baseAngle + CGFloat.random(in: -0.5...0.5)
+            let sparkDist = CGFloat.random(in: 15...35)
+            
+            spark.removeAllAnimations()
+            spark.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: size, height: size), transform: nil)
+            spark.fillColor = (index % 2 == 0)
+                ? NSColor.white.withAlphaComponent(0.9).cgColor
+                : clawColor.withAlphaComponent(0.8).cgColor
+            spark.shadowColor = clawColor.cgColor
+            spark.shadowRadius = 3
+            spark.shadowOpacity = 0.7
+            spark.opacity = 0
+            
+            if spark.superlayer == nil {
+                effectsLayer?.addSublayer(spark)
+            }
+            
+            let startPos = CGPoint(
+                x: clawStart.x + 10 * cos(baseAngle),
+                y: clawStart.y + 10 * sin(baseAngle)
+            )
+            spark.position = startPos
+            
+            let endPos = CGPoint(
+                x: startPos.x + sparkDist * cos(sparkAngle),
+                y: startPos.y + sparkDist * sin(sparkAngle)
+            )
+            
+            let moveAnim = CABasicAnimation(keyPath: "position")
+            moveAnim.fromValue = startPos
+            moveAnim.toValue = endPos
+            moveAnim.duration = Double.random(in: 0.15...0.25)
+            moveAnim.beginTime = now + Double(index) * 0.02
+            
+            let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
+            fadeAnim.values = [0, 1, 0]
+            fadeAnim.keyTimes = [0, 0.3, 1]
+            fadeAnim.duration = moveAnim.duration
+            fadeAnim.beginTime = now + Double(index) * 0.02
+            
+            let scaleAnim = CABasicAnimation(keyPath: "transform.scale")
+            scaleAnim.fromValue = 1
+            scaleAnim.toValue = 0.2
+            scaleAnim.duration = moveAnim.duration
+            scaleAnim.beginTime = now + Double(index) * 0.02
+            
+            spark.add(moveAnim, forKey: "move")
+            spark.add(fadeAnim, forKey: "fade")
+            spark.add(scaleAnim, forKey: "scale")
+        }
+        
+        // Impact flash on hero (claw hit)
         heroImpactLayer.removeAllAnimations()
         placeEffect(heroImpactLayer, at: CGPoint(x: heroView.frame.midX, y: heroView.frame.midY))
 
         let impactFlash = CABasicAnimation(keyPath: "opacity")
         impactFlash.fromValue = 1
         impactFlash.toValue = 0
-        impactFlash.duration = 0.2
-        impactFlash.beginTime = now + 0.12
+        impactFlash.duration = 0.15
+        impactFlash.beginTime = now + 0.15
 
         let impactScale = CABasicAnimation(keyPath: "transform.scale")
-        impactScale.fromValue = 0.5
-        impactScale.toValue = 1.5
-        impactScale.duration = 0.2
-        impactScale.beginTime = now + 0.12
+        impactScale.fromValue = 0.6
+        impactScale.toValue = 1.4
+        impactScale.duration = 0.15
+        impactScale.beginTime = now + 0.15
 
         heroImpactLayer.add(impactFlash, forKey: "impactFlash")
         heroImpactLayer.add(impactScale, forKey: "impactScale")
@@ -2706,7 +2971,6 @@ final class BattleSceneView: NSView {
             return
         }
 
-        let color = heroRole.attackColor
         let tier = min(max(skillLoadout.effectTier + attackIntensity * 2, 0), 14)
         let count = min(4, skillLoadout.sustainedProjectileCount + attackIntensity)
         guard rendersCombatEffects else {
@@ -2716,22 +2980,12 @@ final class BattleSceneView: NSView {
             return
         }
 
-        // Sustained fire gets the swing tell too, at a shorter reach: it repeats
-        // once or twice a second, so it has to stay cheap and not read as a
-        // full-strength strike.
-        heroView.playAttackTell(direction: 1, reach: 4)
-        playAttackSwing(
-            on: heroSwingLayer,
-            from: heroView.frame,
-            direction: 1,
-            color: color,
-            lineWidth: 3
-        )
-
-        for index in 0..<count {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.055) {
-                self.launchShard(color: color, tier: tier, index: index, count: count, isSustained: true)
-            }
+        // Use laser beam effect for sustained attacks too
+        playShockwave(isCrit: false)
+        
+        // Trigger damage
+        for _ in 0..<count {
+            onSustainedHit?(sustainedChipDamage(tier: tier))
         }
     }
 

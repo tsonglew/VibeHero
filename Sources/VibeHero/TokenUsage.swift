@@ -342,6 +342,10 @@ enum TokenUsageScanner {
             return "OpenCode"
         case "kimi", "kimi code", "kimicode":
             return "Kimi"
+        case "openclaw", "open claw":
+            return "OpenClaw"
+        case "hermes":
+            return "Hermes"
         default:
             return rawSource
         }

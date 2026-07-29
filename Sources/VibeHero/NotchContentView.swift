@@ -41,6 +41,8 @@ final class NotchContentView: NSView {
     private var usageTimer: Timer?
     private var usageScanInFlight = false
     private var monsterAttackTimer: Timer?
+    private var fileMonitor: DispatchSourceFileSystemObject?
+    private var fileMonitorQueue = DispatchQueue(label: "com.vibehero.filemonitor", qos: .utility)
     private var heroLevel = SkillProgress.loadHeroLevel()
     private var heroExperience = HeroExperience.loadTotalXP()
     private var currentXP = 0
@@ -556,7 +558,10 @@ final class NotchContentView: NSView {
 
     private func startUsageMonitor() {
         refreshUsage()
-        usageTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        startFileMonitor()
+        
+        // Backup timer - less frequent since file monitor handles real-time updates
+        usageTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshUsage()
                 self?.refreshSessionsIfVisible()
@@ -571,11 +576,45 @@ final class NotchContentView: NSView {
         RunLoop.main.add(attackTimer, forMode: .common)
         monsterAttackTimer = attackTimer
     }
+    
+    private func startFileMonitor() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let claudeRoot = home.appendingPathComponent(".claude/projects")
+        
+        guard FileManager.default.fileExists(atPath: claudeRoot.path) else {
+            return
+        }
+        
+        let fd = open(claudeRoot.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .rename],
+            queue: fileMonitorQueue
+        )
+        
+        source.setEventHandler { [weak self] in
+            // Debounce: wait 0.5s for write to complete
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self?.refreshUsage()
+            }
+        }
+        
+        source.setCancelHandler {
+            close(fd)
+        }
+        
+        source.resume()
+        fileMonitor = source
+    }
 
     private func tickMonsterAttack() {
         let now = Date()
         let hasActiveTokens = tokenActivityExpiresAt.map { $0 > now } ?? false
-        guard hasRealUsageData, !hasActiveTokens else {
+        // Also check for active sessions directly to avoid race conditions
+        let hasActiveSessions = checkActiveSessions()
+        guard hasRealUsageData, !hasActiveTokens, !hasActiveSessions else {
             return
         }
         _ = maybeMonsterAttack(now: now)
@@ -626,15 +665,55 @@ final class NotchContentView: NSView {
             heroHealth = min(1, heroHealth + 0.08)
             tickBattle(tokenDelta: snapshot.totalTokens - previousTokens)
         } else {
-            refreshTokenActivity(now: now, didSpendTokens: false, latestEventAt: snapshot.latestEventAt)
+            // No new tokens, but check if there are active sessions working
+            let hasActiveSessions = checkActiveSessions()
+            if hasActiveSessions {
+                // Keep token activity active while sessions are working
+                tokenActivityExpiresAt = now.addingTimeInterval(TokenActivity.activeDuration)
+                setTokenActivity(true)
+                if lootMessageExpiresAt.map({ $0 <= now }) != false {
+                    combatLabel.stringValue = L10n.string(.watchingSourceLogs, activeSource)
+                }
+            } else {
+                refreshTokenActivity(now: now, didSpendTokens: false, latestEventAt: snapshot.latestEventAt)
+            }
             if lastTokenSpendAt == nil {
                 lastTokenSpendAt = snapshot.latestEventAt
             }
-            if lootMessageExpiresAt.map({ $0 <= now }) != false {
-                combatLabel.stringValue = L10n.string(.watchingSourceLogs, activeSource)
-            }
             updateGameLabels()
         }
+    }
+    
+    private func checkActiveSessions() -> Bool {
+        // Use process table to check for active agent processes (fast)
+        // Falls back to file modification check if process table unavailable
+        if let openProjects = OpenProjectScanner.openProjects(), !openProjects.isEmpty {
+            return true
+        }
+        
+        // Fallback: check file modification time (slower, but works without process access)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let claudeRoot = home.appendingPathComponent(".claude/projects")
+        let cutoff = Date().addingTimeInterval(-60) // 1 minute ago (shorter window)
+        
+        guard let projects = try? FileManager.default.contentsOfDirectory(
+            at: claudeRoot,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else {
+            return false
+        }
+        
+        // Only check project directories, not recursive file scan
+        for project in projects.prefix(10) { // Limit to first 10 projects
+            guard project.hasDirectoryPath else { continue }
+            if let values = try? project.resourceValues(forKeys: [.contentModificationDateKey]),
+               let modifiedAt = values.contentModificationDate,
+               modifiedAt > cutoff {
+                return true
+            }
+        }
+        
+        return false
     }
 
     private func applyNoDataLabels() {
@@ -832,7 +911,7 @@ final class NotchContentView: NSView {
         let damageFraction = CombatTiming.monsterDamagePerHit
             * selectedRole.idleDamageMultiplier
             * ItemSystem.idleDamageTakenMultiplier()
-        let damagePoints = Double(damageFraction * CGFloat(GameStats.heroMaxHP))
+        let damagePoints = max(1, Int(round(damageFraction * CGFloat(GameStats.heroMaxHP))))
         heroHealth = max(0, heroHealth - damageFraction)
         combatLabel.stringValue = L10n.string(.monsterAttackingNoTokens, currentMonster.shortName)
         battleScene.playMonsterAttack(damage: damagePoints)
@@ -1333,7 +1412,8 @@ private enum CombatTiming {
 }
 
 private enum TokenActivity {
-    static let activeDuration: TimeInterval = 6
+    // Longer duration to cover refresh intervals (file monitor debounce + scan time)
+    static let activeDuration: TimeInterval = 15
 }
 
 private enum SkillCharge {
