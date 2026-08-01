@@ -383,12 +383,8 @@ four agents, hide-in-full-screen, and three languages.
   that is scrimmed and, so far, no effect on combat. Hence the "In development" badge.
 - **Equipment management is scrimmed.** Drops, auto-equip, and salvage all run; the panel that
   shows them is disabled, and there is no manual equip/unequip or inventory.
-- **Monster pacing is off.** `spawnMonsterBatch` builds monster `worldX` without the growing
-  `worldOffset` baseline, so after the first batch every monster spawns already at the fight
-  position instead of walking in. One-line fix, but it changes pacing, so it is being decided
-  deliberately.
-- **No tests, no CI, no lint config.** Nothing checks that the three localization dictionaries
-  agree on keys, which is the most likely place for a silent regression.
+- **Limited tests, no CI or lint config.** Encounter rotation, stage boundaries, and boss
+  spawning are covered; localization key parity and the AppKit animation lifecycle are not.
 - **Unsigned, no app icon.** `make app` writes a minimal `Info.plist` with no
   `CFBundleIconFile` and no signing identity.
 
@@ -400,9 +396,7 @@ four agents, hide-in-full-screen, and three languages.
   migrate legacy ranks into it, and drop the skills scrim.
 - Finish the equipment panel: manual equip/unequip, a small inventory, salvage confirmation —
   then drop that scrim too.
-- Decide and land the `worldOffset` spawn baseline so the hero visibly walks between monsters.
-- A key-coverage check over `Localization.swift` (every key present in en/zh/ja) as the first
-  test, wired to a `make test` target.
+- Add a key-coverage test over `Localization.swift` so every key is present in en/zh/ja.
 
 **Then**
 

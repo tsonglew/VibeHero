@@ -1,5 +1,10 @@
 import AppKit
 
+private struct PendingHeroStrike {
+    let tokenCount: Int
+    let comboMultiplier: CGFloat
+}
+
 final class NotchContentView: NSView {
     private let capsuleLayer = CAShapeLayer()
     private let glowLayer = CAGradientLayer()
@@ -57,22 +62,24 @@ final class NotchContentView: NSView {
     private var lastTokenSpendAt: Date?
     private var lastMonsterAttackAt: Date?
     private var tokenActivityExpiresAt: Date?
+    private var tokenActivityExpirationWorkItem: DispatchWorkItem?
     private var monsterRespawnWorkItem: DispatchWorkItem?
     private var currentMonster = MonsterKind.promptWraith
+    private var nextMonsterKind = MonsterKind.promptWraith
     private var hasRealUsageData = false
     private var skillEnergy: CGFloat = 0
-    private var skillCooldownUntil: Date?
-    private var lastSkillCastAt: Date?
     private var lootMessageExpiresAt: Date?
     private var isDefeated = false
     private var selectedRole = HeroRole.load()
     private var totalKills = StageTracker.loadTotalKills()
+    private var currentMonsterStage = 1
     private var currentMonsterIsBoss = false
     private var comboCount = 0
     private var lastComboAt: Date?
+    private var pendingHeroStrikes: [PendingHeroStrike] = []
 
     private var currentStage: Int {
-        StageProgress.stage(for: totalKills)
+        currentMonsterStage
     }
 
     var onHoverChanged: ((Bool) -> Void)?
@@ -100,17 +107,13 @@ final class NotchContentView: NSView {
         self.expandedStyle = expandedStyle
         self.style = collapsedStyle
         super.init(frame: frameRect)
+        currentMonsterStage = StageProgress.stage(for: totalKills)
+        nextMonsterKind = MonsterKind.allCases[totalKills % MonsterKind.allCases.count]
         wantsLayer = true
         setupLayers()
         setupCollapsedHUD()
         setupExpandedHUD()
         applyExperienceState(saveLevel: true)
-        currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
-        battleScene.onSustainedHit = { [weak self] damageFraction in
-            self?.applySustainedMonsterDamage(damageFraction)
-        }
-        // Batch completion is now handled internally by scheduleMonsterRespawn
-        // Spawn initial monster batch
         spawnNextMonsterBatch()
         NotificationCenter.default.addObserver(
             self,
@@ -170,8 +173,8 @@ final class NotchContentView: NSView {
 
     func setExpanded(_ isExpanded: Bool, animated: Bool) {
         self.isExpanded = isExpanded
-        battleScene.rendersCombatEffects = isExpanded
-        compactHeroView.setWalking(!isExpanded && !isDefeated)
+        battleScene.rendersCombatEffects = isExpanded && !isShowingSessions
+        compactHeroView.setWalking(!isExpanded && battleScene.worldIsMoving && !isDefeated)
         style = isExpanded ? expandedStyle : collapsedStyle
 
         let changes = {
@@ -289,6 +292,14 @@ final class NotchContentView: NSView {
     }
 
     private func setupExpandedHUD() {
+        battleScene.onWorldMotionChanged = { [weak self] isMoving in
+            guard let self, !self.isExpanded else { return }
+            self.compactHeroView.setWalking(isMoving && !self.isDefeated)
+        }
+        battleScene.onMonsterEngaged = { [weak self] in
+            self?.flushPendingHeroStrikes()
+        }
+
         [titleLabel, tokenLabel, rateLabel, skillLabel, skillEnergyLabel, combatLabel].forEach {
             $0.lineBreakMode = .byTruncatingTail
         }
@@ -473,6 +484,7 @@ final class NotchContentView: NSView {
 
     @objc private func toggleView() {
         isShowingSessions.toggle()
+        battleScene.rendersCombatEffects = isExpanded && !isShowingSessions
 
         // Toggle game UI visibility
         battleScene.isHidden = isShowingSessions
@@ -531,7 +543,7 @@ final class NotchContentView: NSView {
     }
 
     private func updateTitleLabel() {
-        let stageTag = StageProgress.isBossStage(currentStage)
+        let stageTag = currentMonsterIsBoss
             ? L10n.string(.stageTagBoss, currentStage)
             : L10n.string(.stageTag, currentStage)
         titleLabel.stringValue = "\(L10n.string(.appTitleWithRole, selectedRole.label)) · \(stageTag)"
@@ -559,7 +571,7 @@ final class NotchContentView: NSView {
     private func startUsageMonitor() {
         refreshUsage()
         startFileMonitor()
-        
+
         // Backup timer - less frequent since file monitor handles real-time updates
         usageTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -576,7 +588,7 @@ final class NotchContentView: NSView {
         RunLoop.main.add(attackTimer, forMode: .common)
         monsterAttackTimer = attackTimer
     }
-    
+
     private func startFileMonitor() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let claudeRoot = home.appendingPathComponent(".claude/projects")
@@ -612,9 +624,7 @@ final class NotchContentView: NSView {
     private func tickMonsterAttack() {
         let now = Date()
         let hasActiveTokens = tokenActivityExpiresAt.map { $0 > now } ?? false
-        // Also check for active sessions directly to avoid race conditions
-        let hasActiveSessions = checkActiveSessions()
-        guard hasRealUsageData, !hasActiveTokens, !hasActiveSessions else {
+        guard hasRealUsageData, !hasActiveTokens else {
             return
         }
         _ = maybeMonsterAttack(now: now)
@@ -645,6 +655,7 @@ final class NotchContentView: NSView {
         lastObservedTokens = snapshot.totalTokens
 
         guard snapshot.hasRealData else {
+            tokenActivityExpiresAt = nil
             setTokenActivity(false)
             applyNoDataLabels()
             updateGameLabels()
@@ -665,55 +676,12 @@ final class NotchContentView: NSView {
             heroHealth = min(1, heroHealth + 0.08)
             tickBattle(tokenDelta: snapshot.totalTokens - previousTokens)
         } else {
-            // No new tokens, but check if there are active sessions working
-            let hasActiveSessions = checkActiveSessions()
-            if hasActiveSessions {
-                // Keep token activity active while sessions are working
-                tokenActivityExpiresAt = now.addingTimeInterval(TokenActivity.activeDuration)
-                setTokenActivity(true)
-                if lootMessageExpiresAt.map({ $0 <= now }) != false {
-                    combatLabel.stringValue = L10n.string(.watchingSourceLogs, activeSource)
-                }
-            } else {
-                refreshTokenActivity(now: now, didSpendTokens: false, latestEventAt: snapshot.latestEventAt)
-            }
+            refreshTokenActivity(now: now, didSpendTokens: false, latestEventAt: snapshot.latestEventAt)
             if lastTokenSpendAt == nil {
                 lastTokenSpendAt = snapshot.latestEventAt
             }
             updateGameLabels()
         }
-    }
-    
-    private func checkActiveSessions() -> Bool {
-        // Use process table to check for active agent processes (fast)
-        // Falls back to file modification check if process table unavailable
-        if let openProjects = OpenProjectScanner.openProjects(), !openProjects.isEmpty {
-            return true
-        }
-        
-        // Fallback: check file modification time (slower, but works without process access)
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let claudeRoot = home.appendingPathComponent(".claude/projects")
-        let cutoff = Date().addingTimeInterval(-60) // 1 minute ago (shorter window)
-        
-        guard let projects = try? FileManager.default.contentsOfDirectory(
-            at: claudeRoot,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        ) else {
-            return false
-        }
-        
-        // Only check project directories, not recursive file scan
-        for project in projects.prefix(10) { // Limit to first 10 projects
-            guard project.hasDirectoryPath else { continue }
-            if let values = try? project.resourceValues(forKeys: [.contentModificationDateKey]),
-               let modifiedAt = values.contentModificationDate,
-               modifiedAt > cutoff {
-                return true
-            }
-        }
-        
-        return false
     }
 
     private func applyNoDataLabels() {
@@ -731,10 +699,8 @@ final class NotchContentView: NSView {
         }
 
         // Split each token burst into several staggered strikes so attacks feel
-        // frequent; bigger bursts raise the attack intensity tier (more strikes,
-        // larger effects, denser sustained fire).
+        // frequent; bigger bursts use more strikes of the same energy laser.
         let tier = CombatTiming.attackTier(for: tokenDelta)
-        battleScene.attackIntensity = tier
         let strikeCount = CombatTiming.burstStrikeCounts[tier]
         let comboMultiplier = 1 + 0.05 * CGFloat(comboCount)
         gainSkillEnergy(by: SkillCharge.tokenAttack)
@@ -742,7 +708,7 @@ final class NotchContentView: NSView {
         if comboCount >= 2 {
             battleScene.playCombo(comboCount)
         }
-        combatLabel.stringValue = L10n.string(.sourceUsageTokens, activeSource, formatCompact(tokenDelta))
+        combatLabel.stringValue = L10n.string(.sourceUsageTokens, activeSource, formatTokens(tokenDelta))
 
         let baseTokens = tokenDelta / strikeCount
         let remainder = tokenDelta % strikeCount
@@ -750,15 +716,21 @@ final class NotchContentView: NSView {
             let strikeTokens = baseTokens + (index == strikeCount - 1 ? remainder : 0)
             let delay = CombatTiming.burstStrikeSpacing * Double(index)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.playBurstStrike(strikeTokens: strikeTokens, comboMultiplier: comboMultiplier, intensity: tier)
+                self?.playBurstStrike(strikeTokens: strikeTokens, comboMultiplier: comboMultiplier)
             }
         }
         // Skill casting disabled - only basic attacks
         updateGameLabels()
     }
 
-    private func playBurstStrike(strikeTokens: Int, comboMultiplier: CGFloat, intensity: Int) {
-        guard !isDefeated, battleScene.monsterEngaged, strikeTokens > 0 else {
+    private func playBurstStrike(strikeTokens: Int, comboMultiplier: CGFloat) {
+        guard !isDefeated, monsterHealth > 0, strikeTokens > 0 else {
+            return
+        }
+        guard battleScene.monsterEngaged else {
+            pendingHeroStrikes.append(
+                PendingHeroStrike(tokenCount: strikeTokens, comboMultiplier: comboMultiplier)
+            )
             return
         }
 
@@ -771,13 +743,47 @@ final class NotchContentView: NSView {
         let basePoints = CGFloat(strikeTokens) * SkillProgress.damageMultiplier() * critMultiplier * selectedRole.damageMultiplier
         let comboPoints = min(maxHP * 0.42, basePoints) * comboMultiplier
         let damagePoints = min(maxHP * 0.5, max(comboPoints, maxHP * CombatTiming.minimumStrikeFraction))
-        let shownDamage = max(1, Int(damagePoints.rounded()))
+
+        // Apply item multipliers to get actual damage (same as damageMonster)
+        let actualDamagePoints = damagePoints * ItemSystem.damageMultiplier() * ItemSystem.attackDamageMultiplier()
+        let shownDamage = max(1, Int(actualDamagePoints.rounded()))
         let damageFraction = damagePoints / maxHP
 
+        let resolveImpact: () -> Void = { [weak self] in
+            self?.applyHeroStrikeImpact(damageFraction)
+        }
+        let isAnimated = battleScene.playAttack(
+            damageText: formatCompact(shownDamage),
+            isCrit: isCrit,
+            onImpact: resolveImpact
+        )
+        if !isAnimated {
+            resolveImpact()
+        }
+    }
+
+    private func flushPendingHeroStrikes() {
+        guard !isDefeated, battleScene.monsterEngaged, !pendingHeroStrikes.isEmpty else {
+            return
+        }
+
+        let strikes = pendingHeroStrikes
+        pendingHeroStrikes.removeAll(keepingCapacity: true)
+        for strike in strikes {
+            playBurstStrike(
+                strikeTokens: strike.tokenCount,
+                comboMultiplier: strike.comboMultiplier
+            )
+        }
+    }
+
+    private func applyHeroStrikeImpact(_ damageFraction: CGFloat) {
+        guard !isDefeated, monsterHealth > 0 else {
+            return
+        }
         if let reward = damageMonster(by: damageFraction) {
             combatLabel.stringValue = defeatText(for: reward)
         }
-        battleScene.playAttack(damageText: formatCompact(shownDamage), isCrit: isCrit, intensity: intensity)
         playCompactHeroAttack()
         updateGameLabels()
     }
@@ -789,21 +795,6 @@ final class NotchContentView: NSView {
             comboCount = 1
         }
         lastComboAt = now
-    }
-
-    private func applySustainedMonsterDamage(_ damageFraction: CGFloat) {
-        guard !isDefeated,
-              battleScene.monsterEngaged,
-              hasRealUsageData,
-              tokenActivityExpiresAt.map({ $0 > Date() }) == true else {
-            return
-        }
-
-        if let reward = damageMonster(by: damageFraction) {
-            combatLabel.stringValue = defeatText(for: reward)
-        }
-        // Skill casting disabled - only basic attacks
-        updateGameLabels()
     }
 
     @discardableResult
@@ -838,36 +829,48 @@ final class NotchContentView: NSView {
         if reward.didLevelUp {
             battleScene.playLevelUp()
         }
-        if currentStage > killStage {
-            battleScene.playStageBanner(L10n.string(.stageReached, currentStage), isBoss: false)
+        let nextStage = StageProgress.stage(for: totalKills)
+        if nextStage > killStage {
+            battleScene.playStageBanner(
+                L10n.string(.stageReached, nextStage),
+                isBoss: StageProgress.isBossEncounter(totalKills: totalKills)
+            )
         }
         scheduleMonsterRespawn()
         updateTitleLabel()
         return reward
     }
 
-    // Spawn a new batch of monsters (3-5 per batch, or 1 boss)
+    // Spawn a new batch without crossing a stage boundary. A boss stage starts
+    // with one boss encounter; the rest of that stage returns to regular waves.
     private func spawnNextMonsterBatch() {
-        currentMonster = currentMonster.next
-        currentMonsterIsBoss = StageProgress.isBossStage(currentStage)
-        monsterHealth = 1
-
-        // Spawn batch in battle scene
-        battleScene.spawnMonsterBatch(
-            kind: currentMonster,
-            isBoss: currentMonsterIsBoss,
-            stage: currentStage
+        let plan = MonsterEncounterPlanner.makeBatch(
+            totalKills: totalKills,
+            startingKind: nextMonsterKind,
+            requestedCount: Int.random(in: 5...8)
         )
+        guard let firstEncounter = plan.encounters.first else { return }
+
+        nextMonsterKind = plan.nextKind
+        battleScene.spawnMonsterBatch(plan.encounters)
+        activateMonster(firstEncounter, announce: true)
+    }
+
+    private func activateMonster(_ encounter: MonsterEncounter, announce: Bool) {
+        currentMonster = encounter.kind
+        currentMonsterStage = encounter.stage
+        currentMonsterIsBoss = encounter.isBoss
+        monsterHealth = 1
 
         monsterHPLabel.textColor = currentMonster.hpColor
         monsterHPBar.fillColor = currentMonster.hpColor
         compactHeroView.monsterKind = currentMonster
         compactHeroView.isBoss = currentMonsterIsBoss
 
-        if currentMonsterIsBoss {
+        if announce, currentMonsterIsBoss {
             combatLabel.stringValue = L10n.string(.bossAppears, currentMonster.displayName)
             battleScene.playStageBanner(L10n.string(.bossAppears, currentMonster.shortName), isBoss: true)
-        } else if hasRealUsageData, lootMessageExpiresAt.map({ $0 <= Date() }) != false {
+        } else if announce, hasRealUsageData, lootMessageExpiresAt.map({ $0 <= Date() }) != false {
             combatLabel.stringValue = L10n.string(.monsterRespawned, currentMonster.displayName)
         }
         updateTitleLabel()
@@ -879,13 +882,9 @@ final class NotchContentView: NSView {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
 
-            // Try to advance to next monster in current batch
-            if self.battleScene.hasNextMonsterInBatch() {
-                self.battleScene.advanceToNextMonster()
-                self.monsterHealth = 1
-                self.updateGameLabels()
+            if let nextEncounter = self.battleScene.advanceToNextMonster() {
+                self.activateMonster(nextEncounter, announce: true)
             } else {
-                // Batch complete - spawn next batch
                 self.spawnNextMonsterBatch()
             }
         }
@@ -897,6 +896,12 @@ final class NotchContentView: NSView {
         guard !isDefeated else {
             combatLabel.stringValue = L10n.text(.heroDefeated)
             return true
+        }
+        guard monsterHealth > 0 else {
+            return false
+        }
+        guard battleScene.monsterEngaged else {
+            return false
         }
 
         if let lastMonsterAttackAt,
@@ -911,27 +916,40 @@ final class NotchContentView: NSView {
         let damageFraction = CombatTiming.monsterDamagePerHit
             * selectedRole.idleDamageMultiplier
             * ItemSystem.idleDamageTakenMultiplier()
-        let damagePoints = max(1, Int(round(damageFraction * CGFloat(GameStats.heroMaxHP))))
+        let damagePoints = CombatTiming.monsterDamagePoints(for: damageFraction)
+        let resolveImpact: () -> Void = { [weak self] in
+            self?.applyMonsterStrikeImpact(damageFraction)
+        }
+        let isAnimated = battleScene.playMonsterAttack(damage: damagePoints, onImpact: resolveImpact)
+        if !isAnimated {
+            resolveImpact()
+        }
+        return true
+    }
+
+    private func applyMonsterStrikeImpact(_ damageFraction: CGFloat) {
+        guard !isDefeated else {
+            return
+        }
         heroHealth = max(0, heroHealth - damageFraction)
         combatLabel.stringValue = L10n.string(.monsterAttackingNoTokens, currentMonster.shortName)
-        battleScene.playMonsterAttack(damage: damagePoints)
         playCompactMonsterAttack()
         if heroHealth <= 0 {
             enterDefeatedState()
         }
-        return true
+        updateGameLabels()
     }
 
     private func updateGameLabels() {
         if hasRealUsageData {
             compactLevelLabel.stringValue = "LV \(heroLevel)"
-            compactTokenLabel.stringValue = formatCompact(todayTokens)
-            tokenLabel.stringValue = L10n.string(.todayTokensGold, formatCompact(todayTokens), ItemSystem.gold)
+            compactTokenLabel.stringValue = formatTokens(todayTokens)
+            tokenLabel.stringValue = L10n.string(.todayTokensGold, formatTokens(todayTokens), ItemSystem.gold)
         }
         let boostRemaining = ItemSystem.powerBoostRemaining()
         rateLabel.stringValue = boostRemaining > 0
-            ? L10n.string(.tokenRateBuff, formatCompact(xpRate), boostRemaining)
-            : L10n.string(.xpPerMinute, formatCompact(xpRate))
+            ? L10n.string(.tokenRateBuff, formatTokens(xpRate), boostRemaining)
+            : L10n.string(.xpPerMinute, formatTokens(xpRate))
         updateSkillUI()
         updateStatLabels()
         compactHPBar.value = heroHealth
@@ -948,9 +966,9 @@ final class NotchContentView: NSView {
 
     private func refreshTokenActivity(now: Date, didSpendTokens: Bool, latestEventAt _: Date?) {
         if didSpendTokens {
-            tokenActivityExpiresAt = now.addingTimeInterval(TokenActivity.activeDuration)
-        } else {
-            tokenActivityExpiresAt = nil
+            let expiration = now.addingTimeInterval(TokenActivity.activeDuration)
+            tokenActivityExpiresAt = expiration
+            scheduleTokenActivityExpiration(at: expiration)
         }
 
         let isActive = tokenActivityExpiresAt.map { $0 > now } ?? false
@@ -958,6 +976,25 @@ final class NotchContentView: NSView {
             tokenActivityExpiresAt = nil
         }
         setTokenActivity(isActive)
+    }
+
+    private func scheduleTokenActivityExpiration(at expiration: Date) {
+        tokenActivityExpirationWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  let currentExpiration = self.tokenActivityExpiresAt,
+                  currentExpiration <= Date() else {
+                return
+            }
+            self.tokenActivityExpiresAt = nil
+            self.tokenActivityExpirationWorkItem = nil
+            self.setTokenActivity(false)
+        }
+        tokenActivityExpirationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, expiration.timeIntervalSinceNow),
+            execute: workItem
+        )
     }
 
     private func playCompactMonsterAttack() {
@@ -997,6 +1034,11 @@ final class NotchContentView: NSView {
     }
 
     private func setTokenActivity(_ active: Bool) {
+        if !active {
+            tokenActivityExpiresAt = nil
+            tokenActivityExpirationWorkItem?.cancel()
+            tokenActivityExpirationWorkItem = nil
+        }
         let effectiveActive = active && !isDefeated
         compactHeroView.setTokenActivity(effectiveActive)
         battleScene.tokenActivity = effectiveActive
@@ -1004,9 +1046,6 @@ final class NotchContentView: NSView {
 
     private func updateSkillUI() {
         let loadout = SkillProgress.loadout()
-        if battleScene.skillLoadout != loadout {
-            battleScene.skillLoadout = loadout
-        }
         let points = SkillProgress.availablePoints(heroLevel: heroLevel)
         skillLabel.stringValue = points == 1 ? L10n.text(.skillPointShort) : L10n.string(.skillPointsShort, points)
         skillEnergyBar.value = skillEnergy
@@ -1023,10 +1062,7 @@ final class NotchContentView: NSView {
             return
         }
 
-        if let skillCooldownUntil, skillCooldownUntil > Date() {
-            let seconds = max(1, Int(ceil(skillCooldownUntil.timeIntervalSinceNow)))
-            skillEnergyLabel.stringValue = L10n.string(.skillCooldownStatus, seconds)
-        } else if skillEnergy >= 1 {
+        if skillEnergy >= 1 {
             skillEnergyLabel.stringValue = L10n.string(.skillReadyStatus, "\(castCandidates.count)")
         } else {
             let energy = percentValue(skillEnergy)
@@ -1047,56 +1083,6 @@ final class NotchContentView: NSView {
         let treeBonus = min(0.05, CGFloat(loadout.totalRanks) * 0.004)
         let overclockBonus = CGFloat(loadout.overclockCore) * 0.01
         skillEnergy = min(1, skillEnergy + (amount + treeBonus + overclockBonus) * ItemSystem.skillChargeMultiplier())
-    }
-
-    private func maybeCastSkill(now: Date) {
-        guard !isDefeated, battleScene.monsterEngaged, skillEnergy >= 1 else {
-            return
-        }
-        if let skillCooldownUntil, skillCooldownUntil > now {
-            return
-        }
-        if let lastSkillCastAt,
-           now.timeIntervalSince(lastSkillCastAt) < CombatTiming.minimumSkillCastInterval {
-            return
-        }
-
-        let loadout = SkillProgress.loadout()
-        guard let castSkill = SkillProgress.randomCastSkill(loadout: loadout) else {
-            return
-        }
-
-        let rank = max(1, loadout.rank(for: castSkill))
-        let isCrit = Double.random(in: 0..<1) < CombatTiming.critChance
-        let comboMultiplier = 1 + 0.05 * CGFloat(comboCount)
-        var damageFraction = skillDamageFraction(for: castSkill, rank: rank, loadout: loadout) * comboMultiplier
-        if isCrit {
-            damageFraction = min(0.6, damageFraction * 2)
-        }
-        let displayDamage = max(1, Int(round(damageFraction * CGFloat(StageProgress.maxHP(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss)))))
-        let cooldown = max(castSkill.castCooldown, CombatTiming.minimumSkillCastInterval)
-        skillEnergy = 0
-        skillCooldownUntil = now.addingTimeInterval(cooldown)
-        lastSkillCastAt = now
-        battleScene.playSkillCast(skill: castSkill, rank: rank, damage: displayDamage, isCrit: isCrit)
-        DispatchQueue.main.asyncAfter(deadline: .now() + cooldown) { [weak self] in
-            self?.maybeCastSkill(now: Date())
-            self?.updateGameLabels()
-        }
-
-        if let reward = damageMonster(by: damageFraction) {
-            combatLabel.stringValue = defeatText(for: reward)
-        } else {
-            combatLabel.stringValue = L10n.string(.skillCasting, castSkill.name)
-        }
-    }
-
-    private func skillDamageFraction(for skill: HeroSkill, rank: Int, loadout: SkillLoadout) -> CGFloat {
-        let tierDamage = CGFloat(skill.treeTier) * 0.028
-        let rankDamage = CGFloat(rank) * 0.026
-        let loadoutDamage = CGFloat(loadout.effectTier) * 0.006
-        let roleDamage = selectedRole.damageMultiplier
-        return min(0.38, (0.07 + tierDamage + rankDamage + loadoutDamage) * roleDamage)
     }
 
     private func applyExperienceState(saveLevel: Bool) {
@@ -1204,12 +1190,13 @@ final class NotchContentView: NSView {
     private func updateStatLabels() {
         let hpPercent = percentValue(heroHealth)
         let xpPercent = percentValue(xpProgress)
-        let heroHP = statValue(heroHealth, maxValue: GameStats.heroMaxHP)
+        let heroHP = preciseStatValue(heroHealth, maxValue: GameStats.heroMaxHP)
+        let heroHPText = formatHealth(heroHP)
         let monsterMaxHP = StageProgress.maxHP(stage: currentStage, monster: currentMonster, isBoss: currentMonsterIsBoss)
         let monsterHP = statValue(monsterHealth, maxValue: monsterMaxHP)
-        compactHPLabel.stringValue = "H\(hpPercent)"
-        compactXPLabel.stringValue = "X\(xpPercent)"
-        heroHPLabel.stringValue = L10n.string(.hpPercent, heroHP, hpPercent)
+        compactHPLabel.stringValue = heroHPText
+        compactXPLabel.stringValue = "\(formatCompact(currentXP))"
+        heroHPLabel.stringValue = L10n.string(.hpPercent, heroHPText, GameStats.heroMaxHP, hpPercent)
         heroXPLabel.stringValue = L10n.string(.xpPercent, formatCompact(currentXP), formatCompact(requiredXP), xpPercent)
         let monsterName = currentMonsterIsBoss
             ? L10n.string(.bossMonsterName, currentMonster.shortName)
@@ -1223,6 +1210,7 @@ final class NotchContentView: NSView {
         }
 
         isDefeated = true
+        pendingHeroStrikes.removeAll()
         heroHealth = 0
         setTokenActivity(false)
         combatLabel.stringValue = L10n.text(.heroDefeated)
@@ -1269,7 +1257,7 @@ final class NotchContentView: NSView {
             compactHeroView.setWalking(false)
         } else {
             compactHeroView.kind = .hero
-            compactHeroView.setWalking(!isExpanded)
+            compactHeroView.setWalking(!isExpanded && battleScene.worldIsMoving)
         }
         battleScene.heroDefeated = isDefeated
     }
@@ -1282,14 +1270,30 @@ final class NotchContentView: NSView {
         min(maxValue, max(0, Int(round(value * CGFloat(maxValue)))))
     }
 
-    private func formatCompact(_ value: Int) -> String {
+    private func preciseStatValue(_ value: CGFloat, maxValue: Int) -> CGFloat {
+        min(CGFloat(maxValue), max(0, value * CGFloat(maxValue)))
+    }
+
+    private func formatHealth(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+
+    // Token counts: abbreviated with K/M
+    private func formatTokens(_ value: Int) -> String {
         if value >= 1_000_000 {
             return String(format: "%.1fM", Double(value) / 1_000_000)
         }
         if value >= 1_000 {
-            return "\(value / 1_000)K"
+            return String(format: "%.1fK", Double(value) / 1_000)
         }
         return "\(value)"
+    }
+
+    // Game values (HP, damage, XP): full number
+    private func formatCompact(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 }
 
@@ -1379,11 +1383,10 @@ private enum NotchShape {
     }
 }
 
-private enum CombatTiming {
+enum CombatTiming {
     static let monsterAttackInterval: TimeInterval = 2
     static let idleAttackCooldown: TimeInterval = 1.8
     static let monsterDamagePerHit: CGFloat = 1 / 900
-    static let minimumSkillCastInterval: TimeInterval = 14
     static let reviveHealth: CGFloat = 0.28
     static let comboWindow: TimeInterval = 12
     static let maxCombo = 10
@@ -1396,6 +1399,10 @@ private enum CombatTiming {
     // more staggered strikes and stronger visuals.
     static let burstStrikeCounts = [1, 2, 3, 5]
     static let burstStrikeSpacing: TimeInterval = 0.32
+
+    static func monsterDamagePoints(for damageFraction: CGFloat) -> CGFloat {
+        max(0, damageFraction) * CGFloat(GameStats.heroMaxHP)
+    }
 
     static func attackTier(for tokenDelta: Int) -> Int {
         switch tokenDelta {
@@ -1418,7 +1425,6 @@ private enum TokenActivity {
 
 private enum SkillCharge {
     static let tokenAttack: CGFloat = 0.18
-    static let sustainedHit: CGFloat = 0.035
 }
 
 private struct LevelState {
@@ -1465,6 +1471,17 @@ enum StageProgress {
         stage > 0 && stage % bossStageInterval == 0
     }
 
+    static func killsIntoStage(for totalKills: Int) -> Int {
+        max(0, totalKills) % killsPerStage
+    }
+
+    // A boss is the first encounter of every boss stage. Deriving this from the
+    // persisted kill count makes it survive relaunches without separate flags.
+    static func isBossEncounter(totalKills: Int) -> Bool {
+        let stage = stage(for: totalKills)
+        return isBossStage(stage) && killsIntoStage(for: totalKills) == 0
+    }
+
     // Absolute HP pool: the monster's stat scaled into token-sized units, then
     // deepened by stage and boss factors. These factors used to divide incoming
     // damage instead — same overall pace, but folded into max HP so the bar
@@ -1478,6 +1495,45 @@ enum StageProgress {
     static func xpMultiplier(stage: Int, isBoss: Bool) -> CGFloat {
         let stageFactor = 1 + 0.08 * CGFloat(max(1, stage) - 1)
         return stageFactor * (isBoss ? 2 : 1)
+    }
+}
+
+struct MonsterBatchPlan: Equatable {
+    let encounters: [MonsterEncounter]
+    let nextKind: MonsterKind
+}
+
+enum MonsterEncounterPlanner {
+    static func makeBatch(
+        totalKills: Int,
+        startingKind: MonsterKind,
+        requestedCount: Int
+    ) -> MonsterBatchPlan {
+        let completedKills = max(0, totalKills)
+        let stage = StageProgress.stage(for: completedKills)
+        let killsIntoStage = StageProgress.killsIntoStage(for: completedKills)
+        let remainingInStage = StageProgress.killsPerStage - killsIntoStage
+        let count = StageProgress.isBossEncounter(totalKills: completedKills)
+            ? 1
+            : min(max(1, requestedCount), remainingInStage)
+
+        var nextKind = startingKind
+        var encounters: [MonsterEncounter] = []
+        encounters.reserveCapacity(count)
+
+        for offset in 0..<count {
+            let encounterKills = completedKills + offset
+            encounters.append(
+                MonsterEncounter(
+                    kind: nextKind,
+                    stage: stage,
+                    isBoss: StageProgress.isBossEncounter(totalKills: encounterKills)
+                )
+            )
+            nextKind = nextKind.next
+        }
+
+        return MonsterBatchPlan(encounters: encounters, nextKind: nextKind)
     }
 }
 
@@ -1667,5 +1723,10 @@ enum HeroRole: String, CaseIterable {
 
     func save() {
         UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        NotificationCenter.default.post(name: .vibeHeroRoleChanged, object: self)
     }
+}
+
+extension Notification.Name {
+    static let vibeHeroRoleChanged = Notification.Name("VibeHero.roleChanged")
 }

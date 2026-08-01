@@ -144,7 +144,7 @@ final class NotchWindow: NSPanel {
         applyFullScreenVisibility()
     }
 
-    private func showSettings() {
+    func showSettings() {
         let window = settingsWindow ?? NotchSettingsWindow()
         settingsWindow = window
         window.onRoleChanged = { [weak self] in

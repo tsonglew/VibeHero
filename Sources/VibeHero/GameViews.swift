@@ -16,6 +16,7 @@ final class PixelBarView: NSView {
         didSet {
             fillLayer.backgroundColor = fillColor.cgColor
             ghostLayer.backgroundColor = ghostFillColor().cgColor
+            damageFlashLayer.backgroundColor = damageFlashColor().cgColor
         }
     }
 
@@ -37,6 +38,8 @@ final class PixelBarView: NSView {
     private let trackLayer = CALayer()
     private let ghostLayer = CALayer()
     private let fillLayer = CALayer()
+    private let damageFlashLayer = CALayer()
+    private static let minimumDamageFlashWidth: CGFloat = 3
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -45,11 +48,15 @@ final class PixelBarView: NSView {
         trackLayer.backgroundColor = trackColor.cgColor
         ghostLayer.backgroundColor = ghostFillColor().cgColor
         fillLayer.backgroundColor = fillColor.cgColor
+        damageFlashLayer.backgroundColor = damageFlashColor().cgColor
+        damageFlashLayer.opacity = 0
 
         for barLayer in [trackLayer, ghostLayer, fillLayer] {
             barLayer.anchorPoint = CGPoint(x: 0, y: 0.5)
             layer?.addSublayer(barLayer)
         }
+        layer?.addSublayer(damageFlashLayer)
+        layer?.masksToBounds = true
     }
 
     required init?(coder: NSCoder) {
@@ -66,12 +73,17 @@ final class PixelBarView: NSView {
             barLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
             barLayer.cornerRadius = radius
         }
+        damageFlashLayer.cornerRadius = radius
         fillLayer.transform = CATransform3DMakeScale(value, 1, 1)
         ghostLayer.transform = CATransform3DMakeScale(value, 1, 1)
         CATransaction.commit()
     }
 
     private func updateFillLayers(oldValue: CGFloat) {
+        let presentedGhostValue = (ghostLayer.presentation()?.value(forKeyPath: "transform.scale.x") as? NSNumber)
+            .map { CGFloat(truncating: $0) }
+        let visibleGhostValue = min(1, max(value, presentedGhostValue ?? oldValue))
+
         fillLayer.removeAllAnimations()
         ghostLayer.removeAllAnimations()
         CATransaction.begin()
@@ -89,10 +101,10 @@ final class PixelBarView: NSView {
         }
 
         let drain = CABasicAnimation(keyPath: "transform.scale.x")
-        drain.fromValue = oldValue
+        drain.fromValue = visibleGhostValue
         drain.toValue = value
-        drain.beginTime = CACurrentMediaTime() + 0.25
-        drain.duration = 0.4
+        drain.beginTime = CACurrentMediaTime() + 0.04
+        drain.duration = 0.24
         drain.timingFunction = CAMediaTimingFunction(name: .easeOut)
         drain.fillMode = .backwards
         drain.isRemovedOnCompletion = true
@@ -101,7 +113,39 @@ final class PixelBarView: NSView {
         ghostLayer.transform = CATransform3DMakeScale(value, 1, 1)
         CATransaction.commit()
         ghostLayer.add(drain, forKey: "ghostDrain")
+        playDamageFlash(oldValue: oldValue)
         updateWarningPulse()
+    }
+
+    static func visibleDamageWidth(oldValue: CGFloat, newValue: CGFloat, barWidth: CGFloat) -> CGFloat {
+        guard oldValue > newValue, barWidth > 0 else {
+            return 0
+        }
+        let actualWidth = (oldValue - newValue) * barWidth
+        return min(barWidth, max(actualWidth, minimumDamageFlashWidth))
+    }
+
+    private func playDamageFlash(oldValue: CGFloat) {
+        let flashWidth = Self.visibleDamageWidth(oldValue: oldValue, newValue: value, barWidth: bounds.width)
+        guard flashWidth > 0, bounds.height > 0 else {
+            return
+        }
+
+        let oldTrailingEdge = min(bounds.width, max(0, oldValue * bounds.width))
+        let originX = min(bounds.width - flashWidth, max(0, oldTrailingEdge - flashWidth))
+        damageFlashLayer.removeAllAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        damageFlashLayer.frame = CGRect(x: originX, y: 0, width: flashWidth, height: bounds.height)
+        damageFlashLayer.opacity = 0
+        CATransaction.commit()
+
+        let flash = CAKeyframeAnimation(keyPath: "opacity")
+        flash.values = [0.95, 0.75, 0]
+        flash.keyTimes = [0, 0.35, 1]
+        flash.duration = 0.36
+        flash.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        damageFlashLayer.add(flash, forKey: "damageFlash")
     }
 
     private func ghostFillColor() -> NSColor {
@@ -109,6 +153,10 @@ final class PixelBarView: NSView {
             return fillColor.withAlphaComponent(0.55)
         }
         return blended.withAlphaComponent(0.55)
+    }
+
+    private func damageFlashColor() -> NSColor {
+        fillColor.blended(withFraction: 0.78, of: .white) ?? .white
     }
 
     private func updateWarningPulse() {
@@ -816,6 +864,24 @@ final class PixelActorView: NSView {
         }
     }
 
+    func playAttackTell(direction: CGFloat, reach: CGFloat = 7) {
+        guard !isDefeated, let layer else { return }
+
+        let lunge = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        lunge.values = [0, -reach * 0.25, reach, reach * 0.35, 0]
+        lunge.keyTimes = [0, 0.16, 0.42, 0.70, 1]
+        lunge.duration = 0.28
+        lunge.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(lunge, forKey: "attackLunge")
+
+        let recoil = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        recoil.values = [0, 0.08 * direction, -0.13 * direction, 0]
+        recoil.keyTimes = [0, 0.18, 0.46, 1]
+        recoil.duration = 0.28
+        recoil.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(recoil, forKey: "attackRecoil")
+    }
+
     private func startWalkAnimation() {
         let bob = CAKeyframeAnimation(keyPath: "transform.translation.y")
         bob.values = [0, -2.0, 0, -1.0, 0]
@@ -824,34 +890,6 @@ final class PixelActorView: NSView {
         bob.repeatCount = .infinity
         bob.timingFunction = CAMediaTimingFunction(name: .linear)
         layer?.add(bob, forKey: "walkBob")
-    }
-
-    /// One-shot "this actor just swung" tell: a short wind-up, a lunge along
-    /// `direction` (+1 faces right, -1 faces left), then a settle back.
-    ///
-    /// It runs purely on the actor's own layer, so a swing costs two keyframe
-    /// animations and no drawing. Nudging the sprite's own draw offset instead
-    /// would repaint all of it twice per swing, and sustained fire swings a
-    /// couple of times a second.
-    func playAttackTell(direction: CGFloat, reach: CGFloat = 7) {
-        guard !isDefeated, let layer else {
-            return
-        }
-
-        let lunge = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        lunge.values = [0, -reach * 0.3, reach, reach * 0.3, 0]
-        lunge.keyTimes = [0, 0.16, 0.4, 0.68, 1]
-        lunge.duration = 0.26
-        lunge.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(lunge, forKey: "attackLunge")
-
-        // The tilt is what makes it read as a strike instead of a slide.
-        let swing = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        swing.values = [0, 0.11 * direction, -0.15 * direction, 0]
-        swing.keyTimes = [0, 0.16, 0.42, 1]
-        swing.duration = 0.26
-        swing.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(swing, forKey: "attackSwing")
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1069,22 +1107,34 @@ final class PixelActorView: NSView {
     }
 }
 
-// Represents a single monster instance in the world queue
+struct MonsterEncounter: Equatable {
+    let kind: MonsterKind
+    let stage: Int
+    let isBoss: Bool
+
+    var maxHP: Int {
+        StageProgress.maxHP(stage: stage, monster: kind, isBoss: isBoss)
+    }
+}
+
+// Represents a single monster instance in the world queue.
 private struct MonsterInstance {
     let id = UUID()
-    let kind: MonsterKind
-    let isBoss: Bool
+    let encounter: MonsterEncounter
     let maxHP: CGFloat
     var currentHP: CGFloat
-    var worldX: CGFloat  // Fixed position in the scrolling world
+    // Hero-world coordinate at which this monster reaches its fight position.
+    var worldX: CGFloat
 
-    init(kind: MonsterKind, isBoss: Bool, maxHP: Int, worldX: CGFloat) {
-        self.kind = kind
-        self.isBoss = isBoss
-        self.maxHP = CGFloat(maxHP)
+    init(encounter: MonsterEncounter, worldX: CGFloat) {
+        self.encounter = encounter
+        self.maxHP = CGFloat(encounter.maxHP)
         self.currentHP = self.maxHP
         self.worldX = worldX
     }
+
+    var kind: MonsterKind { encounter.kind }
+    var isBoss: Bool { encounter.isBoss }
 
     var healthFraction: CGFloat {
         currentHP / maxHP
@@ -1109,6 +1159,12 @@ private final class EffectOverlayView: NSView {
     }
 }
 
+private struct HeroAttackRequest {
+    let damageText: String?
+    let isCrit: Bool
+    let onImpact: () -> Void
+}
+
 final class BattleSceneView: NSView {
     /// Every CALayer effect is hosted here rather than on the scene's own layer.
     /// AppKit keeps subview backing layers at the end of the sublayer array, so
@@ -1124,39 +1180,18 @@ final class BattleSceneView: NSView {
     private var monsterQueue: [MonsterInstance] = []
     // Current monster index in the queue (-1 if none)
     private var currentMonsterIndex: Int = -1
-    // World scroll offset (increases as we move right)
-    private var worldOffset: CGFloat = 0
-    // Hero's position in world coordinates (advances as we move right)
+    // Hero's position in world coordinates (advances as the world scrolls).
     private var heroWorldX: CGFloat = 0
-    private let slashLayer = CAShapeLayer()
-    private let projectileLayer = CAShapeLayer()
-    private let impactLayer = CAShapeLayer()
-    private let arcLayer = CAShapeLayer()
-    private let novaLayer = CAShapeLayer()
     private let flashLayer = CALayer()
     private let monsterHitFlashLayer = CALayer()
-    // Attack tells: one reused arc per side, plus the monster's claw marks and
-    // the flash that lands on the hero. Created once so a swing never touches
-    // the layer tree - all of these stay hidden in their model state and are
-    // only visible for the length of their animation.
-    private let heroSwingLayer = CAShapeLayer()
-    private let monsterSwingLayer = CAShapeLayer()
-    private let monsterClawLayers = (0..<3).map { _ in CAShapeLayer() }
+    // The flash that lands on the hero is reused for every wolf-claw hit.
     private let heroImpactLayer = CAShapeLayer()
-    private let pooledProjectileLayers = (0..<8).map { _ in CAShapeLayer() }
-    private let pooledImpactLayers = (0..<4).map { _ in CAShapeLayer() }
     private let floatingTextLabels = (0..<6).map { _ in NSTextField(labelWithString: "") }
     private let monsterOverheadHPBar = PixelBarView()
-    private var tokenAttackTimer: Timer?
-    private var lastRingEffectAt: CFTimeInterval = 0
-    private var projectilePoolIndex = 0
-    private var impactPoolIndex = 0
     private var floatingTextIndex = 0
-    private var effectGeneration = 0
-    private var layerGenerations: [ObjectIdentifier: Int] = [:]
-    var onSustainedHit: ((CGFloat) -> Void)?
 
     private var displayLink: CADisplayLink?
+    private var backgroundSimulationTimer: Timer?
     private var lastUpdateTime: CFTimeInterval = 0
 
     var rendersCombatEffects = false {
@@ -1166,9 +1201,12 @@ final class BattleSceneView: NSView {
             }
             updateWorldMotion()
             if rendersCombatEffects {
+                stopBackgroundSimulation()
                 startGameLoop()
             } else {
+                heroAttackQueue.removeAll()
                 stopGameLoop()
+                startBackgroundSimulation()
             }
         }
     }
@@ -1177,16 +1215,30 @@ final class BattleSceneView: NSView {
     // hero stands to fight, HP bar is visible, and attacks can be triggered.
     // When false the world scrolls and hero walks toward the monster.
     private(set) var monsterEngaged = false
+    private(set) var worldIsMoving = false
+    var onWorldMotionChanged: ((Bool) -> Void)?
+    var onMonsterEngaged: (() -> Void)?
+    private var isAttackInProgress = false
+    private var currentMonsterDefeated = false
+    private var heroAttackQueue: [HeroAttackRequest] = []
     private var approachWorkItem: DispatchWorkItem?
+
+    private static let heroImpactDelay: TimeInterval = 0
+    private static let heroAttackDuration: TimeInterval = 0.40
+    private static let monsterImpactDelay: TimeInterval = 0
 
     // Attack range: monster must be within this distance from hero to engage
     // This is measured from hero's right edge to monster's left edge
     private let attackRange: CGFloat = 30
 
     private func updateWorldMotion() {
-        let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
-        backdropView.scrollingEnabled = moving
-        heroView.setWalking(moving)
+        let moving = currentMonster != nil && !monsterEngaged && !heroDefeated
+        if moving != worldIsMoving {
+            worldIsMoving = moving
+            onWorldMotionChanged?(moving)
+        }
+        backdropView.scrollingEnabled = rendersCombatEffects && moving
+        heroView.setWalking(rendersCombatEffects && moving)
     }
 
     // The current target monster
@@ -1198,22 +1250,6 @@ final class BattleSceneView: NSView {
     // The monster's on-screen frame, honoring an in-flight approach animation.
     private var monsterVisualFrame: CGRect {
         monsterView.layer?.presentation()?.frame ?? monsterView.frame
-    }
-
-    // 0...3, derived from the latest token burst size. Drives burst strike
-    // counts, projectile sizes, and sustained-fire density.
-    var attackIntensity: Int = 0 {
-        didSet {
-            let clamped = min(max(attackIntensity, 0), 3)
-            if clamped != attackIntensity {
-                attackIntensity = clamped
-                return
-            }
-            if clamped != oldValue, tokenActivity {
-                stopSustainedTokenAttack()
-                startSustainedTokenAttack()
-            }
-        }
     }
 
     var monsterKind: MonsterKind {
@@ -1240,10 +1276,11 @@ final class BattleSceneView: NSView {
         get { currentMonster?.healthFraction ?? 1 }
         set {
             guard currentMonsterIndex >= 0, currentMonsterIndex < monsterQueue.count else { return }
+            let previousHealth = monsterHealth
             let clampedHealth = min(max(newValue, 0), 1)
             monsterQueue[currentMonsterIndex].currentHP = clampedHealth * monsterQueue[currentMonsterIndex].maxHP
             monsterOverheadHPBar.value = clampedHealth
-            if newValue < monsterHealth, rendersCombatEffects {
+            if clampedHealth < previousHealth, rendersCombatEffects {
                 pulseMonster()
             }
         }
@@ -1259,31 +1296,15 @@ final class BattleSceneView: NSView {
         didSet {
             heroView.isDefeated = heroDefeated
             if heroDefeated {
-                stopSustainedTokenAttack()
-            } else if tokenActivity {
-                startSustainedTokenAttack()
+                heroAttackQueue.removeAll()
             }
             updateWorldMotion()
-        }
-    }
-
-    var skillLoadout: SkillLoadout = .empty {
-        didSet {
-            if tokenActivity, oldValue != skillLoadout {
-                stopSustainedTokenAttack()
-                startSustainedTokenAttack()
-            }
         }
     }
 
     var tokenActivity: Bool = false {
         didSet {
             heroView.setTokenActivity(tokenActivity && !heroDefeated)
-            if tokenActivity && !heroDefeated {
-                startSustainedTokenAttack()
-            } else {
-                stopSustainedTokenAttack()
-            }
         }
     }
 
@@ -1300,14 +1321,27 @@ final class BattleSceneView: NSView {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         if newWindow == nil {
-            stopSustainedTokenAttack()
+            stopGameLoop()
+            stopBackgroundSimulation()
             backdropView.scrollingEnabled = false
             heroView.setWalking(false)
         }
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        lastUpdateTime = CACurrentMediaTime()
+        if rendersCombatEffects {
+            startGameLoop()
+        } else {
+            startBackgroundSimulation()
+        }
+        updateWorldMotion()
+    }
+
     private var actorSize: CGFloat {
-        min(bounds.height - 14, 46)
+        max(0, min(bounds.height - 14, 46))
     }
 
     // Fight position is derived from bounds, not from heroView.frame, so it is
@@ -1343,6 +1377,8 @@ final class BattleSceneView: NSView {
 
     func playMonsterDeath() {
         approachWorkItem?.cancel()
+        heroAttackQueue.removeAll()
+        currentMonsterDefeated = true
         monsterEngaged = false
         updateWorldMotion()
         let center = CGPoint(x: monsterVisualFrame.midX, y: monsterVisualFrame.midY)
@@ -1401,34 +1437,23 @@ final class BattleSceneView: NSView {
         }
     }
 
-    // Generate a batch of monsters with fixed world positions
-    func spawnMonsterBatch(kind: MonsterKind, isBoss: Bool, stage: Int) {
+    // Generate a batch of monsters with fixed positions in hero-world space.
+    // Positions are independent of the current HUD size, so expanding or moving
+    // the notch cannot move a monster across the engagement boundary.
+    func spawnMonsterBatch(_ encounters: [MonsterEncounter]) {
         approachWorkItem?.cancel()
         monsterQueue.removeAll()
-        // Note: worldOffset and heroWorldX are NOT reset - they continue advancing
-        // This ensures hero's world position is always increasing
+        currentMonsterDefeated = false
 
-        // Generate more monsters per batch for higher density
-        let count = isBoss ? 1 : Int.random(in: 5...8)
-        let baseMaxHP = StageProgress.maxHP(stage: stage, monster: kind, isBoss: isBoss)
-
-        // Space monsters closer together: each monster is ~120-180 units apart
-        // This means monsters appear frequently as the hero walks
-        var lastX = monsterFightX - 80 // Start first monster closer to hero
-        for i in 0..<count {
-            let spacing = CGFloat.random(in: 120...180)
-            lastX += spacing
-            let monster = MonsterInstance(
-                kind: kind,
-                isBoss: isBoss && i == 0, // Only first monster is boss in boss stages
-                maxHP: baseMaxHP,
-                worldX: lastX
-            )
-            monsterQueue.append(monster)
+        var nextFightWorldX = heroWorldX + CGFloat.random(in: 40...100)
+        for (index, encounter) in encounters.enumerated() {
+            if index > 0 {
+                nextFightWorldX += CGFloat.random(in: 120...180)
+            }
+            monsterQueue.append(MonsterInstance(encounter: encounter, worldX: nextFightWorldX))
         }
 
-        // Start with first monster
-        currentMonsterIndex = 0
+        currentMonsterIndex = encounters.isEmpty ? -1 : 0
         setupCurrentMonster()
     }
 
@@ -1442,6 +1467,7 @@ final class BattleSceneView: NSView {
             return
         }
 
+        currentMonsterDefeated = false
         monsterView.layer?.removeAllAnimations()
         monsterView.alphaValue = 1
         monsterView.needsDisplay = true
@@ -1450,7 +1476,7 @@ final class BattleSceneView: NSView {
         monsterOverheadHPBar.fillColor = monster.kind.hpColor
         monsterEngaged = false
 
-        // Position monster based on its worldX relative to current worldOffset
+        // Position the monster from its remaining distance to the hero.
         updateMonsterPosition()
         updateWorldMotion()
     }
@@ -1458,6 +1484,7 @@ final class BattleSceneView: NSView {
     // Update monster view position based on world scrolling
     private func updateMonsterPosition() {
         guard let monster = currentMonster else { return }
+        guard bounds.width > 40, bounds.height > 24 else { return }
 
         let fightFrame = NSRect(
             x: monsterFightX,
@@ -1466,8 +1493,10 @@ final class BattleSceneView: NSView {
             height: monsterView.frame.height
         )
 
-        // Monster's screen X = worldX - worldOffset
-        let screenX = monster.worldX - worldOffset
+        // `worldX` is the hero-world coordinate where the fight begins. The
+        // remaining distance is projected from the current fight position.
+        let remainingDistance = max(0, monster.worldX - heroWorldX)
+        let screenX = monsterFightX + remainingDistance
 
         // Update monster view position (visual position on screen)
         if screenX <= monsterFightX {
@@ -1489,21 +1518,27 @@ final class BattleSceneView: NSView {
         let monsterEdgeX = monsterView.frame.minX
         let distanceToHero = abs(monsterEdgeX - heroAttackPointX)
 
-        if distanceToHero <= attackRange {
+        if !currentMonsterDefeated, distanceToHero <= attackRange {
             // Monster is within attack range - engage!
             if !monsterEngaged {
                 monsterEngaged = true
                 updateWorldMotion()
-                playMonsterArrivalEffects()
+                onMonsterEngaged?()
+                if rendersCombatEffects {
+                    playMonsterArrivalEffects()
+                }
             }
         } else {
-            // Monster is out of attack range - disengage
-            monsterEngaged = false
-            updateWorldMotion()
+            // Monster is out of attack range - only disengage if not currently attacking
+            // This prevents disengaging mid-attack which causes "effect but no damage" issues
+            if monsterEngaged && !isAttackInProgress {
+                monsterEngaged = false
+                updateWorldMotion()
+            }
         }
 
         // Show HP bar only when engaged (within attack range)
-        monsterOverheadHPBar.isHidden = !monsterEngaged
+        monsterOverheadHPBar.isHidden = !monsterEngaged || currentMonsterDefeated
 
         // Update HP bar position
         let barFrame = NSRect(
@@ -1539,13 +1574,9 @@ final class BattleSceneView: NSView {
         monsterView.layer?.add(opacity, forKey: "monsterRespawnOpacity")
     }
 
-    // Check if there are more monsters in the current batch
-    func hasNextMonsterInBatch() -> Bool {
-        return currentMonsterIndex + 1 < monsterQueue.count
-    }
-
     // Move to next monster in queue after defeating current
-    func advanceToNextMonster() {
+    @discardableResult
+    func advanceToNextMonster() -> MonsterEncounter? {
         currentMonsterIndex += 1
 
         if currentMonsterIndex >= monsterQueue.count {
@@ -1553,9 +1584,11 @@ final class BattleSceneView: NSView {
             monsterView.alphaValue = 0
             monsterEngaged = false
             updateWorldMotion()
+            return nil
         } else {
             // Setup next monster
             setupCurrentMonster()
+            return currentMonster?.encounter
         }
     }
 
@@ -1573,31 +1606,44 @@ final class BattleSceneView: NSView {
         displayLink = nil
     }
 
+    private func startBackgroundSimulation() {
+        guard window != nil, backgroundSimulationTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceGameClock()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        backgroundSimulationTimer = timer
+        lastUpdateTime = CACurrentMediaTime()
+    }
+
+    private func stopBackgroundSimulation() {
+        backgroundSimulationTimer?.invalidate()
+        backgroundSimulationTimer = nil
+    }
+
     @objc private func gameLoopTick() {
+        advanceGameClock()
+    }
+
+    private func advanceGameClock() {
         let now = CACurrentMediaTime()
-        let dt = now - lastUpdateTime
+        let dt = min(max(0, now - lastUpdateTime), 0.25)
         lastUpdateTime = now
         updateWorld(dt: dt)
     }
 
     // Called each frame/tick to update world scrolling and monster positions
     func updateWorld(dt: TimeInterval) {
-        guard rendersCombatEffects else { return }
-
-        // If not engaged and hero is walking, scroll the world
-        let moving = rendersCombatEffects && !monsterEngaged && !heroDefeated
+        // Rendering can be paused while the compact HUD is visible, but world
+        // progress and engagement remain part of the game simulation.
+        let moving = currentMonster != nil && !monsterEngaged && !heroDefeated
         if moving {
             let delta = BackdropView.groundScrollSpeed * CGFloat(dt)
-            worldOffset += delta
-            heroWorldX += delta  // Hero advances in world coordinates
+            heroWorldX += delta
             updateMonsterPosition()
         }
-    }
-
-    // Legacy method for compatibility - spawns a single monster batch
-    func playMonsterRespawn() {
-        // This is now handled by spawnMonsterBatch called from NotchContentView
-        setupCurrentMonster()
     }
 
     func playLootDrop(_ drop: LootDrop) {
@@ -1944,70 +1990,70 @@ final class BattleSceneView: NSView {
         heroView.layer?.add(pulse, forKey: "levelUpPulse")
     }
 
-    private func playHitSparks(color: NSColor, intense: Bool) {
-        let center = CGPoint(x: monsterVisualFrame.midX - 4, y: monsterVisualFrame.midY - 3)
-        let sparkCount = intense ? 5 : 3
-        for index in 0..<sparkCount {
-            let spark = CALayer()
-            spark.backgroundColor = (index % 2 == 0 ? NSColor.white : color).cgColor
-            spark.shadowColor = color.cgColor
-            spark.shadowOpacity = 0.3
-            spark.shadowRadius = 1.5
-            spark.frame = NSRect(x: 0, y: 0, width: intense ? 6 : 4, height: 2)
-            spark.position = center
-            effectsLayer?.addSublayer(spark)
-
-            let angle = (CGFloat(index) / CGFloat(sparkCount) + 0.12) * CGFloat.pi * 2
-            let distance = intense ? CGFloat.random(in: 12...20) : CGFloat.random(in: 8...14)
-            let end = CGPoint(x: center.x + cos(angle) * distance, y: center.y + sin(angle) * distance)
-
-            let fly = CABasicAnimation(keyPath: "position")
-            fly.fromValue = center
-            fly.toValue = end
-            fly.duration = 0.2
-            fly.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-            let rotate = CABasicAnimation(keyPath: "transform.rotation.z")
-            rotate.fromValue = angle
-            rotate.toValue = angle + 0.5
-            rotate.duration = 0.2
-
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1
-            fade.toValue = 0
-            fade.duration = 0.22
-            fade.fillMode = .forwards
-            fade.isRemovedOnCompletion = false
-
-            spark.add(fly, forKey: "hitSparkFly")
-            spark.add(rotate, forKey: "hitSparkRotate")
-            spark.add(fade, forKey: "hitSparkFade")
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
-                spark.removeFromSuperlayer()
-            }
+    @discardableResult
+    func playAttack(
+        damageText: String,
+        isCrit: Bool = false,
+        onImpact: @escaping () -> Void
+    ) -> Bool {
+        guard !heroDefeated, rendersCombatEffects, monsterEngaged else {
+            return false
         }
+
+        enqueueHeroAttack(HeroAttackRequest(damageText: damageText, isCrit: isCrit, onImpact: onImpact))
+        return true
     }
 
-    func playAttack(damageText: String, isCrit: Bool = false, intensity: Int = 0) {
-        guard !heroDefeated, rendersCombatEffects else {
+    private func enqueueHeroAttack(_ request: HeroAttackRequest) {
+        heroAttackQueue.append(request)
+        playNextHeroAttackIfNeeded()
+    }
+
+    private func playNextHeroAttackIfNeeded() {
+        guard !isAttackInProgress else {
+            return
+        }
+        guard !heroDefeated, rendersCombatEffects, monsterEngaged else {
+            heroAttackQueue.removeAll()
+            return
+        }
+        guard !heroAttackQueue.isEmpty else {
             return
         }
 
-        if isCrit {
-            showFloatingText(
-                "\(L10n.text(.critLabel)) -\(damageText)",
-                color: NSColor(red: 1.0, green: 0.84, blue: 0.24, alpha: 1.0),
-                fontSize: 14,
-                anchor: .monster,
-                style: .crit
-            )
-        } else {
-            showFloatingText("-\(damageText)", color: NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: 1.0), anchor: .monster)
+        let request = heroAttackQueue.removeFirst()
+        isAttackInProgress = true
+        playShockwave(isCrit: request.isCrit) { [weak self] in
+            guard let self else {
+                return
+            }
+            if let damageText = request.damageText {
+                if request.isCrit {
+                    self.showFloatingText(
+                        "\(L10n.text(.critLabel)) -\(damageText)",
+                        color: NSColor(red: 1.0, green: 0.84, blue: 0.24, alpha: 1.0),
+                        fontSize: 14,
+                        anchor: .monster,
+                        style: .crit
+                    )
+                } else {
+                    self.showFloatingText(
+                        "-\(damageText)",
+                        color: NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: 1.0),
+                        anchor: .monster
+                    )
+                }
+            }
+            request.onImpact()
         }
 
-        // Energy laser attack with synchronized hit effects
-        playShockwave(isCrit: isCrit)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.heroAttackDuration) { [weak self] in
+            guard let self else {
+                return
+            }
+            self.isAttackInProgress = false
+            self.playNextHeroAttackIfNeeded()
+        }
     }
     
     // MARK: - Energy Laser Attack Effect
@@ -2017,15 +2063,17 @@ final class BattleSceneView: NSView {
     private let laserFlickerLayers = (0..<4).map { _ in CAShapeLayer() }
     private let impactBurstLayer = CAShapeLayer()
     
-    private func playShockwave(isCrit: Bool) {
+    private func playShockwave(isCrit: Bool, onImpact: @escaping () -> Void) {
         let heroPos = CGPoint(x: heroView.frame.maxX - 2, y: heroView.frame.midY)
         let monsterPos = CGPoint(x: monsterVisualFrame.minX + 4, y: monsterVisualFrame.midY)
         let now = CACurrentMediaTime()
-        
+
+        heroView.playAttackTell(direction: 1, reach: isCrit ? 9 : 7)
+
         // Create jagged laser path with energy fluctuation
         let laserPath = CGMutablePath()
         laserPath.move(to: heroPos)
-        
+
         // Add jagged points for energy feel
         let segments = 6
         let dx = (monsterPos.x - heroPos.x) / CGFloat(segments)
@@ -2035,7 +2083,7 @@ final class BattleSceneView: NSView {
             let y = heroPos.y + (monsterPos.y - heroPos.y) * CGFloat(i) / CGFloat(segments) + jitter
             laserPath.addLine(to: CGPoint(x: x, y: y))
         }
-        
+
         // 1. Outer glow (thicker, translucent)
         laserGlowLayer.removeAllAnimations()
         laserGlowLayer.path = laserPath
@@ -2150,25 +2198,25 @@ final class BattleSceneView: NSView {
         burstFlash.fromValue = 1
         burstFlash.toValue = 0
         burstFlash.duration = 0.12
-        burstFlash.beginTime = now + 0.08
+        burstFlash.beginTime = now + Self.heroImpactDelay
         
         let burstScale = CABasicAnimation(keyPath: "transform.scale")
         burstScale.fromValue = 0.6
         burstScale.toValue = 1.2
         burstScale.duration = 0.12
-        burstScale.beginTime = now + 0.08
+        burstScale.beginTime = now + Self.heroImpactDelay
         
         impactBurstLayer.add(burstFlash, forKey: "flash")
         impactBurstLayer.add(burstScale, forKey: "scale")
         
-        // 5. Monster hit flash and shake - synchronized with laser arrival (0.08s)
+        // 5. Monster hit flash and shake - committed with the damage update.
         placeEffect(monsterHitFlashLayer, frame: monsterVisualFrame.insetBy(dx: -2, dy: -2))
         monsterHitFlashLayer.removeAllAnimations()
         let hitFlash = CAKeyframeAnimation(keyPath: "opacity")
         hitFlash.values = [0.55, 0]
         hitFlash.keyTimes = [0, 1]
         hitFlash.duration = 0.14
-        hitFlash.beginTime = now + 0.08
+        hitFlash.beginTime = now + Self.heroImpactDelay
         hitFlash.timingFunction = CAMediaTimingFunction(name: .easeOut)
         monsterHitFlashLayer.opacity = 0
         monsterHitFlashLayer.add(hitFlash, forKey: "monsterHitWhiteFlash")
@@ -2179,150 +2227,28 @@ final class BattleSceneView: NSView {
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -shakeDistance, shakeDistance * 0.7, -shakeDistance * 0.4, 0]
         shake.duration = shakeDuration
-        shake.beginTime = now + 0.08
+        shake.beginTime = now + Self.heroImpactDelay
         shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
         monsterView.layer?.add(shake, forKey: "monsterHitShake")
+
+        onImpact()
     }
 
-    private func playBasicSlash(color: NSColor, tier: Int) {
-        slashLayer.removeAllAnimations()
-        slashLayer.path = basicSlashPath()
-        slashLayer.fillColor = nil
-        slashLayer.strokeColor = color.withAlphaComponent(0.95).cgColor
-        slashLayer.shadowColor = color.cgColor
-        slashLayer.lineWidth = 4 + CGFloat(min(tier, 8)) * 0.5
-        slashLayer.lineCap = .round
-        slashLayer.opacity = 1
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.14
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.2
-        fade.beginTime = CACurrentMediaTime() + 0.1
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        slashLayer.add(stroke, forKey: "basicSlashStroke")
-        slashLayer.add(fade, forKey: "basicSlashFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-            self.slashLayer.opacity = 0
-            self.slashLayer.removeAllAnimations()
+    @discardableResult
+    func playMonsterAttack(damage: CGFloat, onImpact: @escaping () -> Void) -> Bool {
+        guard rendersCombatEffects, monsterEngaged else {
+            return false
         }
-    }
-
-    private func playMonsterHitFlash() {
-        placeEffect(monsterHitFlashLayer, frame: monsterVisualFrame.insetBy(dx: -2, dy: -2))
-        monsterHitFlashLayer.removeAllAnimations()
-        let flash = CAKeyframeAnimation(keyPath: "opacity")
-        flash.values = [0.55, 0]
-        flash.keyTimes = [0, 1]
-        flash.duration = 0.14
-        flash.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        monsterHitFlashLayer.opacity = 0
-        monsterHitFlashLayer.add(flash, forKey: "monsterHitWhiteFlash")
-    }
-
-    func playSkillCast(skill: HeroSkill, rank: Int, damage: Int, isCrit: Bool = false) {
-        guard !heroDefeated, rendersCombatEffects else {
-            return
-        }
-
-        let color = skillCastColor(for: skill)
-        let tier = min(18, max(skillLoadout.effectTier + skill.treeTier + rank, skill.treeTier * 2))
-        let projectileCount = min(6, max(3, skillLoadout.projectileCount + rank + skill.treeTier / 2))
-        let arcCount = min(4, max(2, skillLoadout.arcCount + rank + skill.treeTier / 2))
-
-        if isCrit {
-            showFloatingText(
-                "\(L10n.text(.critLabel)) -\(damage)",
-                color: NSColor(red: 1.0, green: 0.84, blue: 0.24, alpha: 1.0),
-                fontSize: 14,
-                anchor: .monster,
-                style: .crit
-            )
-        } else {
-            showFloatingText("-\(damage)", color: color, anchor: .monster)
-        }
-        heroView.playAttackTell(direction: 1, reach: 9)
-        playAttackSwing(
-            on: heroSwingLayer,
-            from: heroView.frame,
-            direction: 1,
-            color: color,
-            lineWidth: 5
-        )
-        playFlash(color: color.withAlphaComponent(0.26 + CGFloat(min(rank, 3)) * 0.04 + (isCrit ? 0.12 : 0)))
-        playSkillBeam(color: color, tier: tier)
-
-        switch skill {
-        case .pulseBlade:
-            playSkillSlash(color: color, tier: tier, rank: rank)
-            playImpact(color: color, tier: tier)
-        case .tokenVolley:
-            for index in 0..<projectileCount {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.035) {
-                    self.launchShard(color: color, tier: tier, index: index, count: projectileCount, isSustained: false)
-                }
-            }
-            playSkillShockwave(color: color, tier: tier, rings: 1)
-        case .arcBurst:
-            playArcBurst(color: color, tier: tier, count: arcCount)
-            playSkillShockwave(color: color, tier: tier, rings: 2)
-        case .wraithMark:
-            playWraithMark(color: color, tier: tier)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                self.playSkillRift(color: color, tier: tier)
-                self.playImpact(color: color, tier: tier)
-            }
-        case .novaStorm:
-            playNovaStorm(color: color, tier: tier)
-            playOrbitSparks(color: color, tier: tier)
-            playSkillShockwave(color: color, tier: tier, rings: 3)
-        case .overclockCore:
-            playOrbitSparks(color: color, tier: tier)
-            playNovaStorm(color: color, tier: tier)
-            playArcBurst(color: color, tier: tier, count: min(4, arcCount + 1))
-            let overclockProjectileCount = min(6, projectileCount + 2)
-            for index in 0..<overclockProjectileCount {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.028) {
-                    self.launchShard(color: color, tier: tier, index: index, count: overclockProjectileCount, isSustained: false)
-                }
-            }
-        }
-
-        shakeMonster()
-    }
-
-    func playMonsterAttack(damage: Int) {
-        guard rendersCombatEffects else {
-            return
-        }
+        playWolfClawAttack()
         showFloatingText(
-            L10n.string(.hpDamage, damage),
+            L10n.string(.hpDamageDecimal, Double(damage)),
             color: NSColor(red: 1.0, green: 0.36, blue: 0.32, alpha: 1.0),
             anchor: .hero
         )
         playFlash(color: NSColor(red: 1.0, green: 0.18, blue: 0.16, alpha: 0.20))
-        playMonsterProjectile()
         shakeHero()
-
-        // Mirror of the hero's tell. Transform-based, so it composes with the
-        // approach animation instead of stomping the monster's frame - which is
-        // why this no longer has to sit out an unfinished approach.
-        monsterView.playAttackTell(direction: -1, reach: 8)
-        playAttackSwing(
-            on: monsterSwingLayer,
-            from: monsterVisualFrame,
-            direction: -1,
-            color: NSColor(red: 1.0, green: 0.32, blue: 0.26, alpha: 1.0)
-        )
+        onImpact()
+        return true
     }
 
     // Wolf claw scratch layers
@@ -2330,7 +2256,7 @@ final class BattleSceneView: NSView {
     private let clawCoreLayers = (0..<3).map { _ in CAShapeLayer() }
     private let clawSparkLayers = (0..<6).map { _ in CAShapeLayer() }
     
-    private func playMonsterProjectile() {
+    private func playWolfClawAttack() {
         // Wolf claw slash - fierce energy claw marks raking toward hero
         let clawColor = monsterKind.hpColor
         let now = CACurrentMediaTime()
@@ -2504,13 +2430,13 @@ final class BattleSceneView: NSView {
         impactFlash.fromValue = 1
         impactFlash.toValue = 0
         impactFlash.duration = 0.15
-        impactFlash.beginTime = now + 0.15
+        impactFlash.beginTime = now + Self.monsterImpactDelay
 
         let impactScale = CABasicAnimation(keyPath: "transform.scale")
         impactScale.fromValue = 0.6
         impactScale.toValue = 1.4
         impactScale.duration = 0.15
-        impactScale.beginTime = now + 0.15
+        impactScale.beginTime = now + Self.monsterImpactDelay
 
         heroImpactLayer.add(impactFlash, forKey: "impactFlash")
         heroImpactLayer.add(impactScale, forKey: "impactScale")
@@ -2527,55 +2453,6 @@ final class BattleSceneView: NSView {
         flashLayer.backgroundColor = NSColor.clear.cgColor
         flashLayer.opacity = 0
         effectsLayer?.addSublayer(flashLayer)
-
-        slashLayer.strokeColor = HeroRole.other.attackColor.cgColor
-        slashLayer.fillColor = nil
-        slashLayer.lineWidth = 4
-        slashLayer.lineCap = .round
-        slashLayer.opacity = 0
-        slashLayer.shadowOpacity = 0.2
-        slashLayer.shadowRadius = 3
-        effectsLayer?.addSublayer(slashLayer)
-
-        projectileLayer.opacity = 0
-        projectileLayer.shadowOpacity = 0.16
-        projectileLayer.shadowRadius = 2
-        effectsLayer?.addSublayer(projectileLayer)
-
-        impactLayer.fillColor = nil
-        impactLayer.lineWidth = 3
-        impactLayer.lineCap = .square
-        impactLayer.opacity = 0
-        impactLayer.shadowOpacity = 0.18
-        impactLayer.shadowRadius = 2
-        effectsLayer?.addSublayer(impactLayer)
-
-        arcLayer.fillColor = nil
-        arcLayer.lineCap = .round
-        arcLayer.lineJoin = .round
-        arcLayer.opacity = 0
-        arcLayer.shadowOpacity = 0.18
-        arcLayer.shadowRadius = 2
-        effectsLayer?.addSublayer(arcLayer)
-
-        novaLayer.fillColor = nil
-        novaLayer.lineCap = .round
-        novaLayer.opacity = 0
-        novaLayer.shadowOpacity = 0
-        effectsLayer?.addSublayer(novaLayer)
-
-        pooledProjectileLayers.forEach { projectile in
-            projectile.opacity = 0
-            projectile.shadowOpacity = 0
-            effectsLayer?.addSublayer(projectile)
-        }
-        pooledImpactLayers.forEach { impact in
-            impact.fillColor = nil
-            impact.lineCap = .round
-            impact.opacity = 0
-            impact.shadowOpacity = 0
-            effectsLayer?.addSublayer(impact)
-        }
 
         floatingTextLabels.forEach { label in
             label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
@@ -2601,24 +2478,6 @@ final class BattleSceneView: NSView {
         monsterHitFlashLayer.opacity = 0
         effectsLayer?.addSublayer(monsterHitFlashLayer)
 
-        // The swing arcs live in the overlay too, so they read in front of the
-        // sprite that threw them.
-        [heroSwingLayer, monsterSwingLayer].forEach { swing in
-            swing.fillColor = nil
-            swing.lineCap = .round
-            swing.lineWidth = 4
-            swing.opacity = 0
-            effectsLayer?.addSublayer(swing)
-        }
-
-        monsterClawLayers.enumerated().forEach { index, claw in
-            claw.fillColor = nil
-            claw.lineCap = .round
-            claw.lineWidth = 3 - CGFloat(index) * 0.5
-            claw.opacity = 0
-            effectsLayer?.addSublayer(claw)
-        }
-
         // The hit the hero takes: a red ring plus a soft fill, so it reads as a
         // flash on the sprite rather than a dark blotch over it.
         heroImpactLayer.path = CGPath(ellipseIn: CGRect(x: -15, y: -15, width: 30, height: 30), transform: nil)
@@ -2627,482 +2486,6 @@ final class BattleSceneView: NSView {
         heroImpactLayer.lineWidth = 2.5
         heroImpactLayer.opacity = 0
         effectsLayer?.addSublayer(heroImpactLayer)
-    }
-
-    /// A sword arc swung from the attacker's front edge: the clearest cue that a
-    /// hit was triggered, and cheap - one path rebuild plus two animations on a
-    /// layer that already exists. `direction` is +1 for the hero (swings right)
-    /// and -1 for the monster (swings left).
-    private func playAttackSwing(
-        on swing: CAShapeLayer,
-        from actorFrame: CGRect,
-        direction: CGFloat,
-        color: NSColor,
-        lineWidth: CGFloat = 5
-    ) {
-        let radius = max(16, actorFrame.width * 0.6)
-        let center = CGPoint(
-            x: direction > 0 ? actorFrame.maxX - 8 : actorFrame.minX + 8,
-            y: actorFrame.midY
-        )
-        let halfSweep: CGFloat = 62 * .pi / 180
-        let base: CGFloat = direction > 0 ? 0 : .pi
-
-        // Both sides start at the top of the arc and sweep down, so the stroke
-        // animation always looks like a downward slash.
-        let path = CGMutablePath()
-        path.addArc(
-            center: center,
-            radius: radius,
-            startAngle: direction > 0 ? base + halfSweep : base - halfSweep,
-            endAngle: direction > 0 ? base - halfSweep : base + halfSweep,
-            clockwise: direction > 0
-        )
-
-        swing.removeAllAnimations()
-        swing.path = path
-        swing.strokeColor = color.cgColor
-        swing.lineWidth = lineWidth
-        // A glow around the blade: one shadow on one layer, only alive for the
-        // quarter second the arc is on screen.
-        swing.shadowColor = color.cgColor
-        swing.shadowOpacity = 0.9
-        swing.shadowRadius = 4
-        swing.shadowOffset = .zero
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.13
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        // A trailing edge that chases the leading one, so the arc thins out
-        // behind the swing instead of hanging in the air as a full ring.
-        let trail = CABasicAnimation(keyPath: "strokeStart")
-        trail.fromValue = 0
-        trail.toValue = 1
-        trail.duration = 0.26
-        trail.timingFunction = CAMediaTimingFunction(name: .easeIn)
-
-        // The layer's model opacity stays 0, so the keyframe both shows and
-        // hides the swing: no cleanup timer, nothing left visible on screen.
-        let flash = CAKeyframeAnimation(keyPath: "opacity")
-        flash.values = [1, 1, 0]
-        flash.keyTimes = [0, 0.6, 1]
-        flash.duration = 0.28
-        flash.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        swing.add(stroke, forKey: "attackSwingStroke")
-        swing.add(trail, forKey: "attackSwingTrail")
-        swing.add(flash, forKey: "attackSwingFlash")
-    }
-
-    private func basicSlashPath() -> CGPath {
-        // Semi-circular sword arc - a sweeping slash from upper-left to lower-right
-        let center = CGPoint(x: monsterVisualFrame.midX, y: monsterVisualFrame.midY)
-        let radius: CGFloat = 28
-
-        let path = CGMutablePath()
-
-        // Draw arc from 135° to -45° (top-left → top → bottom-right)
-        // In flipped coordinates (NSView), y increases downward
-        path.addArc(
-            center: center,
-            radius: radius,
-            startAngle: 135 * .pi / 180,
-            endAngle: -45 * .pi / 180,
-            clockwise: true
-        )
-
-        return path
-    }
-
-    private func playProjectile(color: NSColor, tier: Int) {
-        projectileLayer.removeAllAnimations()
-        projectileLayer.fillColor = color.cgColor
-        projectileLayer.shadowColor = color.cgColor
-        projectileLayer.opacity = 1
-        let diameter = 8 + CGFloat(min(tier, 5)) * 1.2
-        projectileLayer.frame = NSRect(
-            x: 0,
-            y: 0,
-            width: diameter,
-            height: diameter
-        )
-        projectileLayer.path = CGPath(
-            ellipseIn: projectileLayer.bounds,
-            transform: nil
-        )
-
-        let y = heroView.frame.midY - 2
-        let start = CGPoint(x: heroView.frame.maxX + 10, y: y)
-        let end = CGPoint(x: monsterVisualFrame.midX - 8, y: y)
-        projectileLayer.position = end
-
-        let fly = CABasicAnimation(keyPath: "position")
-        fly.fromValue = start
-        fly.toValue = end
-        fly.duration = max(0.11, 0.18 - Double(min(tier, 5)) * 0.012)
-        fly.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.08
-        fade.beginTime = CACurrentMediaTime() + 0.14
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        projectileLayer.add(fly, forKey: "projectileFly")
-        projectileLayer.add(fade, forKey: "projectileFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
-            self.projectileLayer.opacity = 0
-            self.projectileLayer.removeAllAnimations()
-        }
-    }
-
-    private func playVolley(color: NSColor, tier: Int, count: Int) {
-        guard count > 1 else {
-            return
-        }
-
-        for index in 1..<count {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.045) {
-                self.launchShard(color: color, tier: tier, index: index, count: count, isSustained: false)
-            }
-        }
-    }
-
-    private func playSkillSlash(color: NSColor, tier: Int, rank: Int) {
-        slashLayer.removeAllAnimations()
-        slashLayer.path = skillSlashPath().cgPath
-        slashLayer.strokeColor = color.cgColor
-        slashLayer.shadowColor = color.cgColor
-        slashLayer.lineWidth = 6 + CGFloat(min(tier, 8)) * 0.55 + CGFloat(rank)
-        slashLayer.opacity = 1
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.24
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.28
-        fade.beginTime = CACurrentMediaTime() + 0.16
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        slashLayer.add(stroke, forKey: "skillSlashStroke")
-        slashLayer.add(fade, forKey: "skillSlashFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) {
-            self.slashLayer.opacity = 0
-            self.slashLayer.removeAllAnimations()
-        }
-    }
-
-    private func playSkillBeam(color: NSColor, tier: Int) {
-        let beam = CAShapeLayer()
-        beam.fillColor = nil
-        beam.strokeColor = color.withAlphaComponent(0.92).cgColor
-        beam.lineWidth = 3 + CGFloat(min(tier, 8)) * 0.25
-        beam.lineCap = .round
-        beam.shadowColor = color.cgColor
-        beam.shadowOpacity = 0.18
-        beam.shadowRadius = 2
-        beam.opacity = 1
-
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: heroView.frame.maxX + 4, y: heroView.frame.midY - 2))
-        path.curve(
-            to: NSPoint(x: monsterVisualFrame.midX - 6, y: monsterVisualFrame.midY - 5),
-            controlPoint1: NSPoint(x: bounds.midX - 34, y: bounds.midY - 20),
-            controlPoint2: NSPoint(x: bounds.midX + 24, y: bounds.midY + 14)
-        )
-        let cgPath = path.cgPath
-        beam.path = cgPath
-        beam.shadowPath = cgPath
-        effectsLayer?.addSublayer(beam)
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.18
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.24
-        fade.beginTime = CACurrentMediaTime() + 0.10
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        beam.add(stroke, forKey: "skillBeamStroke")
-        beam.add(fade, forKey: "skillBeamFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-            beam.removeFromSuperlayer()
-        }
-    }
-
-    private func playSkillShockwave(color: NSColor, tier: Int, rings: Int) {
-        guard shouldPlayRingEffect(minimumInterval: 0.22) else {
-            return
-        }
-
-        let flare = CAShapeLayer()
-        let center = CGPoint(x: monsterVisualFrame.midX - 5, y: monsterVisualFrame.midY - 5)
-        let width = 56 + CGFloat(min(tier, 8)) * 2
-        let height = 30 + CGFloat(min(tier, 6))
-        let flareBounds = CGRect(x: 0, y: 0, width: width, height: height)
-        let localCenter = CGPoint(x: flareBounds.midX, y: flareBounds.midY)
-        let path = shockFlarePath(center: localCenter, width: width - 8, bands: min(max(2, rings + 1), 4)).cgPath
-        flare.fillColor = nil
-        flare.strokeColor = color.withAlphaComponent(0.88).cgColor
-        flare.lineWidth = 2.0 + CGFloat(min(tier, 5)) * 0.15
-        flare.lineCap = .square
-        flare.lineJoin = .miter
-        flare.shadowOpacity = 0
-        flare.frame = flareBounds
-        flare.position = center
-        flare.path = path
-        flare.opacity = 1
-        effectsLayer?.addSublayer(flare)
-
-        let slide = CABasicAnimation(keyPath: "transform.translation.x")
-        slide.fromValue = -5
-        slide.toValue = 5
-        slide.duration = 0.2
-        slide.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.16
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.22
-        fade.beginTime = CACurrentMediaTime() + 0.08
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        flare.add(slide, forKey: "skillShockwaveSlide")
-        flare.add(stroke, forKey: "skillShockwaveStroke")
-        flare.add(fade, forKey: "skillShockwaveFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-            flare.removeFromSuperlayer()
-        }
-    }
-
-    private func playSkillRift(color: NSColor, tier: Int) {
-        let rift = CAShapeLayer()
-        rift.fillColor = color.withAlphaComponent(0.16).cgColor
-        rift.strokeColor = color.cgColor
-        rift.lineWidth = 2.5 + CGFloat(min(tier, 7)) * 0.25
-        rift.lineJoin = .round
-        rift.shadowColor = color.cgColor
-        rift.shadowOpacity = 0.16
-        rift.shadowRadius = 2
-        let path = skillRiftPath(center: CGPoint(x: monsterVisualFrame.midX - 5, y: monsterVisualFrame.midY - 5), radius: 18 + CGFloat(min(tier, 8))).cgPath
-        rift.path = path
-        rift.shadowPath = path
-        rift.opacity = 1
-        effectsLayer?.addSublayer(rift)
-
-        let rotate = CABasicAnimation(keyPath: "transform.rotation.z")
-        rotate.fromValue = -0.18
-        rotate.toValue = 0.22
-        rotate.duration = 0.22
-        rotate.autoreverses = true
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.32
-        fade.beginTime = CACurrentMediaTime() + 0.16
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        rift.add(rotate, forKey: "skillRiftRotate")
-        rift.add(fade, forKey: "skillRiftFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) {
-            rift.removeFromSuperlayer()
-        }
-    }
-
-    private func startSustainedTokenAttack() {
-        guard tokenAttackTimer == nil else {
-            return
-        }
-
-        let interval = max(0.55, skillLoadout.sustainedInterval / (1 + 0.35 * Double(attackIntensity)))
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.fireSustainedProjectile()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        tokenAttackTimer = timer
-        DispatchQueue.main.async { [weak self, weak timer] in
-            guard let self, let timer, self.tokenAttackTimer === timer, self.tokenActivity else {
-                return
-            }
-            self.fireSustainedProjectile()
-        }
-    }
-
-    private func stopSustainedTokenAttack() {
-        tokenAttackTimer?.invalidate()
-        tokenAttackTimer = nil
-    }
-
-    private func fireSustainedProjectile() {
-        guard !heroDefeated, monsterEngaged, bounds.width > 40, bounds.height > 24 else {
-            return
-        }
-
-        let tier = min(max(skillLoadout.effectTier + attackIntensity * 2, 0), 14)
-        let count = min(4, skillLoadout.sustainedProjectileCount + attackIntensity)
-        guard rendersCombatEffects else {
-            for _ in 0..<count {
-                onSustainedHit?(sustainedChipDamage(tier: tier))
-            }
-            return
-        }
-
-        // Use laser beam effect for sustained attacks too
-        playShockwave(isCrit: false)
-        
-        // Trigger damage
-        for _ in 0..<count {
-            onSustainedHit?(sustainedChipDamage(tier: tier))
-        }
-    }
-
-    private func launchShard(color: NSColor, tier: Int, index: Int, count: Int, isSustained: Bool) {
-        guard bounds.width > 40, bounds.height > 24 else {
-            return
-        }
-
-        let projectile = nextProjectileLayer()
-        projectile.removeAllAnimations()
-        projectile.fillColor = color.cgColor
-        projectile.strokeColor = color.withAlphaComponent(0.85).cgColor
-        projectile.lineWidth = 1
-        projectile.opacity = 0
-
-        let diameter = 7 + CGFloat(min(tier, 5)) * 1.1
-        let projectileSize = CGSize(width: diameter, height: diameter)
-        projectile.frame = NSRect(origin: .zero, size: projectileSize)
-        projectile.path = CGPath(ellipseIn: projectile.bounds, transform: nil)
-
-        let laneOffset = CGFloat(index - max(0, count - 1) / 2) * 5
-        let y = heroView.frame.midY - 3 + laneOffset
-        let start = CGPoint(x: heroView.frame.maxX + 8, y: y)
-        let end = CGPoint(x: monsterVisualFrame.midX - 9, y: y)
-        projectile.position = end
-        let generation = markLayerInUse(projectile)
-
-        let fly = CABasicAnimation(keyPath: "position")
-        fly.fromValue = start
-        fly.toValue = end
-        fly.duration = isSustained ? 0.34 : 0.24
-        fly.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fadeIn = CABasicAnimation(keyPath: "opacity")
-        fadeIn.fromValue = 0
-        fadeIn.toValue = 1
-        fadeIn.duration = 0.06
-
-        projectile.opacity = 1
-        projectile.add(fly, forKey: "tokenProjectileFly")
-        projectile.add(fadeIn, forKey: "tokenProjectileFadeIn")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + (isSustained ? 0.30 : 0.22)) {
-            self.playSustainedImpact(at: end, color: color, tier: tier)
-            if isSustained {
-                self.onSustainedHit?(self.sustainedChipDamage(tier: tier))
-            }
-            self.shakeMonster()
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + (isSustained ? 0.42 : 0.34)) {
-            self.hideLayer(projectile, generation: generation)
-        }
-    }
-
-    private func playSustainedImpact(at point: CGPoint, color: NSColor, tier: Int) {
-        let impact = nextImpactLayer()
-        impact.removeAllAnimations()
-        impact.fillColor = nil
-        impact.strokeColor = color.cgColor
-        impact.lineWidth = 1.8 + CGFloat(min(tier, 5)) * 0.25
-        impact.lineCap = .round
-        let path = miniImpactPath(center: point, radius: 6 + CGFloat(min(tier, 5))).cgPath
-        impact.path = path
-        impact.opacity = 1
-        let generation = markLayerInUse(impact)
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.12
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.18
-        fade.beginTime = CACurrentMediaTime() + 0.08
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        impact.add(stroke, forKey: "sustainedImpactStroke")
-        impact.add(fade, forKey: "sustainedImpactFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            self.hideLayer(impact, generation: generation)
-        }
-    }
-
-    private func nextProjectileLayer() -> CAShapeLayer {
-        let projectile = pooledProjectileLayers[projectilePoolIndex]
-        projectilePoolIndex = (projectilePoolIndex + 1) % pooledProjectileLayers.count
-        return projectile
-    }
-
-    private func nextImpactLayer() -> CAShapeLayer {
-        let impact = pooledImpactLayers[impactPoolIndex]
-        impactPoolIndex = (impactPoolIndex + 1) % pooledImpactLayers.count
-        return impact
-    }
-
-    private func markLayerInUse(_ layer: CALayer) -> Int {
-        effectGeneration &+= 1
-        layerGenerations[ObjectIdentifier(layer)] = effectGeneration
-        return effectGeneration
-    }
-
-    private func hideLayer(_ layer: CALayer, generation: Int) {
-        guard layerGenerations[ObjectIdentifier(layer)] == generation else {
-            return
-        }
-        layer.opacity = 0
-        layer.removeAllAnimations()
-    }
-
-    private func sustainedChipDamage(tier: Int) -> CGFloat {
-        0.0012 + CGFloat(min(max(tier, 0), 14)) * 0.00008
     }
 
     private func pulseMonster() {
@@ -3138,49 +2521,6 @@ final class BattleSceneView: NSView {
         CATransaction.commit()
     }
 
-    private func playImpact(color: NSColor, tier: Int) {
-        impactLayer.removeAllAnimations()
-        impactLayer.strokeColor = color.cgColor
-        impactLayer.shadowColor = color.cgColor
-        impactLayer.lineWidth = 3 + CGFloat(min(tier, 4)) * 0.45
-        impactLayer.opacity = 1
-        // The rays are built around the layer's own origin and the layer is moved
-        // onto the monster, so the scale animation below blows the star up in
-        // place. Drawing it at scene coordinates instead would scale it away
-        // from the scene's origin and throw the star off to the right.
-        placeEffect(impactLayer, at: CGPoint(x: monsterVisualFrame.midX - 4, y: monsterVisualFrame.midY - 3))
-        impactLayer.path = impactPath(center: .zero).cgPath
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.16
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 0.75
-        scale.toValue = 1.25 + CGFloat(min(tier, 5)) * 0.08
-        scale.duration = 0.18
-        scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.2
-        fade.beginTime = CACurrentMediaTime() + 0.12
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        impactLayer.add(stroke, forKey: "impactStroke")
-        impactLayer.add(scale, forKey: "impactScale")
-        impactLayer.add(fade, forKey: "impactFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-            self.impactLayer.opacity = 0
-            self.impactLayer.removeAllAnimations()
-        }
-    }
-
     private func playFlash(color: NSColor) {
         flashLayer.removeAllAnimations()
         flashLayer.frame = bounds
@@ -3195,176 +2535,6 @@ final class BattleSceneView: NSView {
         flashLayer.add(flash, forKey: "flash")
     }
 
-    private func playArcBurst(color: NSColor, tier: Int, count: Int) {
-        arcLayer.removeAllAnimations()
-        arcLayer.strokeColor = color.withAlphaComponent(0.92).cgColor
-        arcLayer.shadowColor = color.cgColor
-        arcLayer.lineWidth = 2.2 + CGFloat(min(tier, 5)) * 0.35
-        arcLayer.opacity = 1
-        arcLayer.path = arcBurstPath(center: CGPoint(x: monsterVisualFrame.midX - 6, y: monsterVisualFrame.midY - 4), count: count).cgPath
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.22
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.26
-        fade.beginTime = CACurrentMediaTime() + 0.14
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        arcLayer.add(stroke, forKey: "arcStroke")
-        arcLayer.add(fade, forKey: "arcFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.44) {
-            self.arcLayer.opacity = 0
-            self.arcLayer.removeAllAnimations()
-        }
-    }
-
-    private func playNovaStorm(color: NSColor, tier: Int) {
-        guard shouldPlayRingEffect(minimumInterval: 0.14) else {
-            playImpact(color: color, tier: tier)
-            return
-        }
-
-        novaLayer.removeAllAnimations()
-        novaLayer.strokeColor = color.cgColor
-        novaLayer.shadowColor = color.cgColor
-        novaLayer.shadowOpacity = 0
-        novaLayer.lineWidth = 2.5 + CGFloat(min(tier, 6)) * 0.3
-        novaLayer.opacity = 1
-        let center = CGPoint(x: monsterVisualFrame.midX - 5, y: monsterVisualFrame.midY - 4)
-        let radius = 16 + CGFloat(min(tier, 7)) * 2
-        let padding: CGFloat = 8
-        let diameter = (radius + padding) * 2
-        novaLayer.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
-        novaLayer.position = center
-        let localCenter = CGPoint(x: diameter / 2, y: diameter / 2)
-        let path = novaPath(center: localCenter, radius: radius).cgPath
-        novaLayer.path = path
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.24
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.28
-        fade.beginTime = CACurrentMediaTime() + 0.16
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        novaLayer.add(stroke, forKey: "novaStroke")
-        novaLayer.add(fade, forKey: "novaFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.novaLayer.opacity = 0
-            self.novaLayer.removeAllAnimations()
-        }
-    }
-
-    private func playWraithMark(color: NSColor, tier: Int) {
-        let mark = CAShapeLayer()
-        let center = CGPoint(x: monsterVisualFrame.midX - 5, y: monsterVisualFrame.midY - 5)
-        let radius = 11 + CGFloat(skillLoadout.wraithMark) * 2
-        let padding: CGFloat = 4
-        let diameter = (radius + padding) * 2
-        mark.fillColor = color.withAlphaComponent(0.18).cgColor
-        mark.strokeColor = color.withAlphaComponent(0.95).cgColor
-        mark.lineWidth = 1.6 + CGFloat(min(tier, 5)) * 0.18
-        mark.lineCap = .round
-        mark.shadowColor = color.cgColor
-        mark.shadowOpacity = 0.22
-        mark.shadowRadius = 3
-        mark.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
-        mark.position = center
-        let localCenter = CGPoint(x: diameter / 2, y: diameter / 2)
-        let path = markPath(center: localCenter, radius: radius).cgPath
-        mark.path = path
-        mark.shadowPath = path
-        mark.opacity = 1
-        effectsLayer?.addSublayer(mark)
-
-        let stroke = CABasicAnimation(keyPath: "strokeEnd")
-        stroke.fromValue = 0
-        stroke.toValue = 1
-        stroke.duration = 0.18
-        stroke.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1
-        fade.toValue = 0
-        fade.duration = 0.32
-        fade.beginTime = CACurrentMediaTime() + 0.12
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-
-        mark.add(stroke, forKey: "markStroke")
-        mark.add(fade, forKey: "markFade")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) {
-            mark.removeFromSuperlayer()
-        }
-    }
-
-    private func playOrbitSparks(color: NSColor, tier: Int) {
-        let center = CGPoint(x: monsterVisualFrame.midX - 5, y: monsterVisualFrame.midY - 5)
-        let sparkCount = min(5, 3 + skillLoadout.overclockCore)
-
-        for index in 0..<sparkCount {
-            let spark = CALayer()
-            spark.backgroundColor = color.cgColor
-            spark.shadowOpacity = 0
-            spark.frame = NSRect(x: 0, y: 0, width: 7, height: 2)
-            spark.position = center
-            spark.opacity = 1
-            effectsLayer?.addSublayer(spark)
-
-            let angle = CGFloat(index) / CGFloat(max(1, sparkCount)) * CGFloat.pi * 2
-            let radius = 18 + CGFloat(min(tier, 8)) * 1.4
-            let end = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-
-            let fly = CABasicAnimation(keyPath: "position")
-            fly.fromValue = center
-            fly.toValue = end
-            fly.duration = 0.26
-            fly.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-            let rotate = CABasicAnimation(keyPath: "transform.rotation.z")
-            rotate.fromValue = angle
-            rotate.toValue = angle + 0.7
-            rotate.duration = 0.26
-            rotate.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1
-            fade.toValue = 0
-            fade.duration = 0.28
-            fade.fillMode = .forwards
-            fade.isRemovedOnCompletion = false
-
-            spark.add(fly, forKey: "orbitSparkFly")
-            spark.add(rotate, forKey: "orbitSparkRotate")
-            spark.add(fade, forKey: "orbitSparkFade")
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
-                spark.removeFromSuperlayer()
-            }
-        }
-    }
-
-    private func shakeMonster() {
-        shake(layer: monsterView.layer, distance: 4, duration: 0.22)
-    }
-
     private func shakeHero() {
         shake(layer: heroView.layer, distance: -4, duration: 0.24)
     }
@@ -3375,35 +2545,6 @@ final class BattleSceneView: NSView {
         shake.duration = duration
         shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
         layer?.add(shake, forKey: "shake")
-    }
-
-    private func shouldPlayRingEffect(minimumInterval: CFTimeInterval) -> Bool {
-        let now = CACurrentMediaTime()
-        guard now - lastRingEffectAt >= minimumInterval else {
-            return false
-        }
-
-        lastRingEffectAt = now
-        return true
-    }
-
-    private func impactPath(center: CGPoint) -> NSBezierPath {
-        let path = NSBezierPath()
-        let rays: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
-            (-12, 0, -5, 0),
-            (5, 0, 13, 0),
-            (0, -11, 0, -4),
-            (0, 5, 0, 12),
-            (-8, -8, -3, -3),
-            (4, 4, 10, 10)
-        ]
-
-        for ray in rays {
-            path.move(to: NSPoint(x: center.x + ray.0, y: center.y + ray.1))
-            path.line(to: NSPoint(x: center.x + ray.2, y: center.y + ray.3))
-        }
-
-        return path
     }
 
     private func lootPath(for drop: LootDrop, in rect: CGRect) -> CGPath {
@@ -3452,35 +2593,6 @@ final class BattleSceneView: NSView {
         return path
     }
 
-    private func miniImpactPath(center: CGPoint, radius: CGFloat) -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: center.x - radius, y: center.y))
-        path.line(to: NSPoint(x: center.x - radius * 0.25, y: center.y))
-        path.move(to: NSPoint(x: center.x + radius * 0.25, y: center.y))
-        path.line(to: NSPoint(x: center.x + radius, y: center.y))
-        path.move(to: NSPoint(x: center.x, y: center.y - radius))
-        path.line(to: NSPoint(x: center.x, y: center.y - radius * 0.25))
-        path.move(to: NSPoint(x: center.x, y: center.y + radius * 0.25))
-        path.line(to: NSPoint(x: center.x, y: center.y + radius))
-        return path
-    }
-
-    private func arcBurstPath(center: CGPoint, count: Int) -> NSBezierPath {
-        let path = NSBezierPath()
-        let arcCount = max(1, count)
-        for index in 0..<arcCount {
-            let offset = CGFloat(index) * 6
-            let flip: CGFloat = index % 2 == 0 ? 1 : -1
-            path.move(to: NSPoint(x: center.x - 22 + offset * 0.35, y: center.y - 8 * flip))
-            path.curve(
-                to: NSPoint(x: center.x + 20 - offset * 0.25, y: center.y - 12 * flip),
-                controlPoint1: NSPoint(x: center.x - 12, y: center.y - (24 - offset) * flip),
-                controlPoint2: NSPoint(x: center.x + 8, y: center.y + (6 + offset) * flip)
-            )
-        }
-        return path
-    }
-
     private func reviveRaysPath(center: CGPoint) -> NSBezierPath {
         let path = NSBezierPath()
         let rays: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
@@ -3505,106 +2617,6 @@ final class BattleSceneView: NSView {
         return path
     }
 
-    private func shockFlarePath(center: CGPoint, width: CGFloat, bands: Int) -> NSBezierPath {
-        let path = NSBezierPath()
-        let bandCount = max(2, bands)
-        let left = center.x - width / 2
-        let right = center.x + width / 2
-
-        for index in 0..<bandCount {
-            let spread = CGFloat(index) * 4
-            let y = center.y + CGFloat(index - (bandCount - 1) / 2) * 7
-            path.move(to: NSPoint(x: left + spread, y: y))
-            path.line(to: NSPoint(x: center.x - 6, y: y - 3))
-            path.line(to: NSPoint(x: center.x + 3, y: y + 4))
-            path.line(to: NSPoint(x: right - spread, y: y))
-        }
-
-        path.move(to: NSPoint(x: center.x - 12, y: center.y - 13))
-        path.line(to: NSPoint(x: center.x + 10, y: center.y + 13))
-        path.move(to: NSPoint(x: center.x - 10, y: center.y + 12))
-        path.line(to: NSPoint(x: center.x + 14, y: center.y - 12))
-        return path
-    }
-
-    private func markPath(center: CGPoint, radius: CGFloat) -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: center.x, y: center.y - radius))
-        path.line(to: NSPoint(x: center.x + radius * 0.82, y: center.y))
-        path.line(to: NSPoint(x: center.x, y: center.y + radius))
-        path.line(to: NSPoint(x: center.x - radius * 0.82, y: center.y))
-        path.close()
-        path.move(to: NSPoint(x: center.x - radius * 0.6, y: center.y))
-        path.line(to: NSPoint(x: center.x + radius * 0.6, y: center.y))
-        path.move(to: NSPoint(x: center.x, y: center.y - radius * 0.6))
-        path.line(to: NSPoint(x: center.x, y: center.y + radius * 0.6))
-        return path
-    }
-
-    private func novaPath(center: CGPoint, radius: CGFloat) -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: center.x - radius - 4, y: center.y))
-        path.line(to: NSPoint(x: center.x + radius + 4, y: center.y))
-        path.move(to: NSPoint(x: center.x, y: center.y - radius - 4))
-        path.line(to: NSPoint(x: center.x, y: center.y + radius + 4))
-        path.move(to: NSPoint(x: center.x - radius * 0.72, y: center.y - radius * 0.72))
-        path.line(to: NSPoint(x: center.x + radius * 0.72, y: center.y + radius * 0.72))
-        path.move(to: NSPoint(x: center.x - radius * 0.72, y: center.y + radius * 0.72))
-        path.line(to: NSPoint(x: center.x + radius * 0.72, y: center.y - radius * 0.72))
-        path.move(to: NSPoint(x: center.x - radius * 0.32, y: center.y - radius))
-        path.line(to: NSPoint(x: center.x + radius * 0.32, y: center.y + radius))
-        path.move(to: NSPoint(x: center.x + radius * 0.32, y: center.y - radius))
-        path.line(to: NSPoint(x: center.x - radius * 0.32, y: center.y + radius))
-        return path
-    }
-
-    private func skillSlashPath() -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: bounds.midX - 34, y: bounds.midY + 20))
-        path.curve(
-            to: NSPoint(x: bounds.midX + 40, y: bounds.midY - 22),
-            controlPoint1: NSPoint(x: bounds.midX - 18, y: bounds.midY - 5),
-            controlPoint2: NSPoint(x: bounds.midX + 24, y: bounds.midY + 8)
-        )
-        path.move(to: NSPoint(x: bounds.midX - 20, y: bounds.midY - 18))
-        path.curve(
-            to: NSPoint(x: bounds.midX + 34, y: bounds.midY + 16),
-            controlPoint1: NSPoint(x: bounds.midX - 4, y: bounds.midY - 2),
-            controlPoint2: NSPoint(x: bounds.midX + 16, y: bounds.midY + 2)
-        )
-        return path
-    }
-
-    private func skillRiftPath(center: CGPoint, radius: CGFloat) -> NSBezierPath {
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: center.x, y: center.y - radius))
-        path.line(to: NSPoint(x: center.x + radius * 0.42, y: center.y - radius * 0.24))
-        path.line(to: NSPoint(x: center.x + radius, y: center.y))
-        path.line(to: NSPoint(x: center.x + radius * 0.36, y: center.y + radius * 0.30))
-        path.line(to: NSPoint(x: center.x, y: center.y + radius))
-        path.line(to: NSPoint(x: center.x - radius * 0.42, y: center.y + radius * 0.24))
-        path.line(to: NSPoint(x: center.x - radius, y: center.y))
-        path.line(to: NSPoint(x: center.x - radius * 0.36, y: center.y - radius * 0.30))
-        path.close()
-        return path
-    }
-
-    private func skillCastColor(for skill: HeroSkill) -> NSColor {
-        switch skill {
-        case .pulseBlade:
-            heroRole.attackColor
-        case .tokenVolley:
-            NSColor(red: 0.0, green: 0.95, blue: 0.78, alpha: 1)
-        case .arcBurst:
-            NSColor(red: 0.34, green: 0.68, blue: 1.0, alpha: 1)
-        case .wraithMark:
-            NSColor(red: 0.92, green: 0.36, blue: 1.0, alpha: 1)
-        case .novaStorm:
-            NSColor(red: 1.0, green: 0.74, blue: 0.20, alpha: 1)
-        case .overclockCore:
-            NSColor(red: 1.0, green: 0.38, blue: 0.22, alpha: 1)
-        }
-    }
 }
 
 private struct HeroPalette {
@@ -3616,23 +2628,6 @@ private struct HeroPalette {
 }
 
 private extension HeroRole {
-    var attackColor: NSColor {
-        switch self {
-        case .pm:
-            NSColor(red: 0.32, green: 0.68, blue: 1.0, alpha: 1)
-        case .designer:
-            NSColor(red: 0.78, green: 0.52, blue: 1.0, alpha: 1)
-        case .artist:
-            NSColor(red: 1.0, green: 0.42, blue: 0.52, alpha: 1)
-        case .engineer:
-            NSColor(red: 0.0, green: 0.95, blue: 0.78, alpha: 1)
-        case .qa:
-            NSColor(red: 0.42, green: 1.0, blue: 0.58, alpha: 1)
-        case .other:
-            NSColor(red: 1.0, green: 0.86, blue: 0.28, alpha: 1)
-        }
-    }
-
     var palette: HeroPalette {
         switch self {
         case .pm:

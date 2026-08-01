@@ -14,6 +14,11 @@ let package = Package(
         .executableTarget(
             name: "VibeHero",
             path: "Sources/VibeHero"
+        ),
+        .testTarget(
+            name: "VibeHeroTests",
+            dependencies: ["VibeHero"],
+            path: "Tests/VibeHeroTests"
         )
     ]
 )

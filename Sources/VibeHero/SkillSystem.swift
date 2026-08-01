@@ -179,20 +179,14 @@ enum SkillProgress {
         return true
     }
 
-    static func effectTier() -> Int {
-        let ranks = HeroSkill.allCases.map { rank(for: $0) }
-        let totalRank = ranks.reduce(0, +)
-        let novaBonus = rank(for: .novaStorm) * 2
-        let overclockBonus = rank(for: .overclockCore) * 3
-        return min(14, totalRank + novaBonus + overclockBonus)
-    }
-
     static func damageMultiplier() -> CGFloat {
         let pulseBonus = CGFloat(rank(for: .pulseBlade)) * 0.05
+        let volleyBonus = CGFloat(rank(for: .tokenVolley)) * 0.04
         let markBonus = CGFloat(rank(for: .wraithMark)) * 0.06
         let arcBonus = CGFloat(rank(for: .arcBurst)) * 0.03
+        let novaBonus = CGFloat(rank(for: .novaStorm)) * 0.07
         let coreBonus = CGFloat(rank(for: .overclockCore)) * 0.04
-        return 1 + pulseBonus + markBonus + arcBonus + coreBonus
+        return 1 + pulseBonus + volleyBonus + markBonus + arcBonus + novaBonus + coreBonus
     }
 
     static func loadout() -> SkillLoadout {
@@ -286,38 +280,6 @@ struct SkillLoadout: Equatable {
     let wraithMark: Int
     let novaStorm: Int
     let overclockCore: Int
-
-    var effectTier: Int {
-        min(14, pulseBlade + tokenVolley + arcBurst + wraithMark + novaStorm * 3 + overclockCore * 4)
-    }
-
-    var projectileCount: Int {
-        min(5, 1 + tokenVolley + overclockCore)
-    }
-
-    var arcCount: Int {
-        min(5, arcBurst + novaStorm)
-    }
-
-    var hasMark: Bool {
-        wraithMark > 0
-    }
-
-    var hasNova: Bool {
-        novaStorm > 0
-    }
-
-    var hasOverclock: Bool {
-        overclockCore > 0
-    }
-
-    var sustainedInterval: TimeInterval {
-        max(1.15, 1.9 - TimeInterval(tokenVolley) * 0.12 - TimeInterval(overclockCore) * 0.18)
-    }
-
-    var sustainedProjectileCount: Int {
-        min(2, max(1, 1 + min(tokenVolley, 1) + min(overclockCore, 1)))
-    }
 
     var totalRanks: Int {
         pulseBlade + tokenVolley + arcBurst + wraithMark + novaStorm + overclockCore

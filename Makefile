@@ -7,13 +7,14 @@ INSTALL_DIR ?= /Applications
 DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 SWIFT := env DEVELOPER_DIR=$(DEVELOPER_DIR) swift
 
-.PHONY: help run dev build release app install clean
+.PHONY: help run dev build test release app install clean
 
 help:
 	@printf "Vibe Hero commands:\n"
 	@printf "  make run      Run the app\n"
 	@printf "  make dev      Run and auto-restart on source changes\n"
 	@printf "  make build    Build a debug binary\n"
+	@printf "  make test     Run logic tests\n"
 	@printf "  make release  Build a release binary\n"
 	@printf "  make app      Build Vibe Hero.app\n"
 	@printf "  make install  Install Vibe Hero.app to /Applications\n"
@@ -27,6 +28,9 @@ dev:
 
 build:
 	$(SWIFT) build
+
+test:
+	$(SWIFT) test
 
 release:
 	$(SWIFT) build -c release

@@ -19,10 +19,13 @@ enum LegacyDefaultsMigration {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var notchWindow: NotchWindow?
     private var statusItem: NSStatusItem?
-    private var showMenuItem: NSMenuItem?
+    private var heroMenuItem: NSMenuItem?
+    private var openMenuItem: NSMenuItem?
+    private var settingsMenuItem: NSMenuItem?
+    private var fullScreenMenuItem: NSMenuItem?
     private var quitMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -43,6 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .notchHeroLanguageChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(roleChanged),
+            name: .vibeHeroRoleChanged,
+            object: nil
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -50,65 +59,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
+        let role = HeroRole.load()
+        let roleIcon = createStatusIcon(for: role)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = createEngineerStatusIcon()
+        item.button?.image = roleIcon
         item.button?.imagePosition = .imageOnly
 
         let menu = NSMenu()
-        let showItem = NSMenuItem(title: L10n.text(.showNotch), action: #selector(showNotchFromMenu), keyEquivalent: "s")
+        menu.delegate = self
+
+        let heroItem = NSMenuItem(title: heroMenuTitle(for: role), action: nil, keyEquivalent: "")
+        heroItem.image = roleIcon
+        heroItem.isEnabled = false
+
+        let openItem = NSMenuItem(title: L10n.text(.openVibeHero), action: #selector(openVibeHero), keyEquivalent: "o")
+        openItem.target = self
+        openItem.image = NSImage(systemSymbolName: "macwindow", accessibilityDescription: L10n.text(.openVibeHero))
+
+        let settingsItem = NSMenuItem(title: L10n.text(.openSettings), action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: L10n.text(.openSettings))
+
+        let fullScreenItem = NSMenuItem(title: L10n.text(.hideInFullScreen), action: #selector(toggleFullScreenHide), keyEquivalent: "")
+        fullScreenItem.target = self
+        fullScreenItem.state = FullScreenHidePreference.load() ? .on : .off
+
         let quitItem = NSMenuItem(title: L10n.text(.quitVibeHero), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(showItem)
+        menu.addItem(heroItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(openItem)
+        menu.addItem(settingsItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(fullScreenItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(quitItem)
         item.menu = menu
 
-        showMenuItem = showItem
+        heroMenuItem = heroItem
+        openMenuItem = openItem
+        settingsMenuItem = settingsItem
+        fullScreenMenuItem = fullScreenItem
         quitMenuItem = quitItem
         statusItem = item
     }
 
-    private func createEngineerStatusIcon() -> NSImage {
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshStatusMenu()
+    }
+
+    private func refreshStatusMenu() {
+        let role = HeroRole.load()
+        let roleIcon = createStatusIcon(for: role)
+        statusItem?.button?.image = roleIcon
+        heroMenuItem?.image = roleIcon
+        heroMenuItem?.title = heroMenuTitle(for: role)
+        openMenuItem?.title = L10n.text(.openVibeHero)
+        settingsMenuItem?.title = L10n.text(.openSettings)
+        fullScreenMenuItem?.title = L10n.text(.hideInFullScreen)
+        fullScreenMenuItem?.state = FullScreenHidePreference.load() ? .on : .off
+        quitMenuItem?.title = L10n.text(.quitVibeHero)
+    }
+
+    private func heroMenuTitle(for role: HeroRole) -> String {
+        L10n.string(.appTitleWithRole, role.label)
+    }
+
+    private func createStatusIcon(for role: HeroRole) -> NSImage {
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size)
+        let hero = PixelActorView(kind: .hero)
+        hero.frame = NSRect(origin: .zero, size: size)
+        hero.heroRole = role
 
-        image.lockFocus()
-
-        let scale: CGFloat = 18 / 16
-        let skinColor = NSColor(red: 0.95, green: 0.74, blue: 0.48, alpha: 1)
-        let hairColor = NSColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1)
-        let shirtColor = NSColor(red: 0.0, green: 0.72, blue: 0.78, alpha: 1)
-        let glassesFrame = NSColor(red: 0.10, green: 0.14, blue: 0.18, alpha: 1)
-        let glassesLens = NSColor(red: 0.0, green: 0.95, blue: 0.78, alpha: 1)
-
-        // Head (skin)
-        drawPixelRect(x: 5, y: 6, w: 6, h: 5, scale: scale, color: skinColor)
-
-        // Hair (top and sides)
-        drawPixelRect(x: 4, y: 10, w: 8, h: 2, scale: scale, color: hairColor)
-        drawPixelRect(x: 4, y: 8, w: 1, h: 3, scale: scale, color: hairColor)
-        drawPixelRect(x: 11, y: 8, w: 1, h: 3, scale: scale, color: hairColor)
-
-        // Body (shirt)
-        drawPixelRect(x: 5, y: 2, w: 6, h: 4, scale: scale, color: shirtColor)
-
-        // Glasses frame
-        drawPixelRect(x: 5, y: 7, w: 6, h: 1, scale: scale, color: glassesFrame)
-        drawPixelRect(x: 5, y: 6, w: 1, h: 1, scale: scale, color: glassesFrame)
-        drawPixelRect(x: 10, y: 6, w: 1, h: 1, scale: scale, color: glassesFrame)
-
-        // Glasses lens (engineer's signature cyan glasses)
-        drawPixelRect(x: 6, y: 6, w: 2, h: 1, scale: scale, color: glassesLens)
-        drawPixelRect(x: 8, y: 6, w: 2, h: 1, scale: scale, color: glassesLens)
-
-        image.unlockFocus()
+        let image = NSImage(size: size, flipped: true) { rect in
+            hero.frame = rect
+            hero.draw(rect)
+            return true
+        }
 
         image.isTemplate = false
         return image
-    }
-
-    private func drawPixelRect(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, scale: CGFloat, color: NSColor) {
-        color.setFill()
-        NSRect(x: x * scale, y: y * scale, width: w * scale, height: h * scale).fill()
     }
 
     private func showNotchWindow() {
@@ -117,8 +146,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.show()
     }
 
-    @objc private func showNotchFromMenu() {
+    @objc private func openVibeHero() {
         showNotchWindow()
+    }
+
+    @objc private func openSettings() {
+        let window = notchWindow ?? NotchWindow()
+        notchWindow = window
+        window.showSettings()
+    }
+
+    @objc private func toggleFullScreenHide() {
+        FullScreenHidePreference.save(!FullScreenHidePreference.load())
+        notchWindow?.refreshFullScreenVisibility()
+        refreshStatusMenu()
     }
 
     @objc private func screenParametersChanged() {
@@ -126,7 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func languageChanged() {
-        showMenuItem?.title = L10n.text(.showNotch)
-        quitMenuItem?.title = L10n.text(.quitVibeHero)
+        refreshStatusMenu()
+    }
+
+    @objc private func roleChanged() {
+        refreshStatusMenu()
     }
 }

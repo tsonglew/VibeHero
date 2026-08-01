@@ -4,6 +4,8 @@ import Darwin
 // MARK: - IDE Session Info
 
 struct IDESession: Identifiable, Sendable {
+    static let activeWindow: TimeInterval = 300
+
     let id: String
     let ide: IDEType
     let projectPath: String
@@ -11,7 +13,11 @@ struct IDESession: Identifiable, Sendable {
     let tokenCount: Int
 
     var isActive: Bool {
-        Date().timeIntervalSince(lastActivityAt) < 300 // Active within 5 minutes
+        isActive(at: Date())
+    }
+
+    func isActive(at date: Date) -> Bool {
+        date.timeIntervalSince(lastActivityAt) < Self.activeWindow
     }
 
     var displayName: String {
@@ -70,10 +76,9 @@ enum IDEType: String, CaseIterable, Sendable {
 ///
 /// Transcripts outlive the runs that wrote them - `~/.claude/projects` keeps a
 /// directory per project ever opened, which is how a machine with 5 live
-/// sessions listed 21 of them. The process table is the only place the live
-/// set exists: an agent
-/// CLI keeps the project as its working directory for its whole run, so a live
-/// process's cwd *is* an open project.
+/// sessions listed 21 of them. Agent CLIs keep their project as the process cwd;
+/// Codex Desktop is the exception because every task shares one app-server, so
+/// its recently written transcript is used as a second liveness signal below.
 enum OpenProjectScanner {
     /// Maps each open project path to the agent CLIs running in it. Returns
     /// `nil` when the process table cannot be read (a sandboxed build, for
@@ -275,11 +280,13 @@ final class SessionMonitor {
     ///
     /// A session matches on its recorded cwd, and only against the agents
     /// actually running there - a project open in Claude does not resurrect the
-    /// three Codex transcripts written in it earlier today. Codex also keeps one
-    /// file per run, so the newest of them stands for the live session.
-    private nonisolated static func sessionsInOpenProjects(
+    /// three old Codex transcripts written in it earlier today. Recent Codex
+    /// Desktop transcripts are also accepted, then collapsed to the newest row
+    /// per project because the shared app-server has no project-specific cwd.
+    nonisolated static func sessionsInOpenProjects(
         _ sessions: [IDESession],
-        openProjects: [String: Set<IDEType>]
+        openProjects: [String: Set<IDEType>],
+        now: Date = Date()
     ) -> [IDESession] {
         // A Claude transcript whose cwd could not be read still carries its
         // directory name, which is the cwd with every "/" replaced by "-".
@@ -292,8 +299,15 @@ final class SessionMonitor {
 
         for session in sessions {
             let path = SessionPath.normalize(session.projectPath)
-            guard let liveAgents = openProjects[path] ?? byDirectoryName[session.id],
-                  liveAgents.contains(session.ide) else {
+            let liveAgents = openProjects[path] ?? byDirectoryName[session.id]
+            let hasMatchingProcess = liveAgents?.contains(session.ide) == true
+
+            // Codex Desktop uses one shared app-server whose cwd is the app's
+            // launch directory, not the cwd of each visible task. Its session
+            // JSONL is the per-task liveness signal, so retain recently written
+            // Codex transcripts even when no project-scoped process is visible.
+            let hasRecentCodexTranscript = session.ide == .codex && session.isActive(at: now)
+            guard hasMatchingProcess || hasRecentCodexTranscript else {
                 continue
             }
 
@@ -1124,9 +1138,11 @@ final class SessionRowView: NSView {
     }
 
     private func formatTokens(_ count: Int) -> String {
+        // Token counts: abbreviated with K/M
         if count >= 1_000_000 {
             return String(format: "%.1fM", Double(count) / 1_000_000)
-        } else if count >= 1_000 {
+        }
+        if count >= 1_000 {
             return String(format: "%.1fK", Double(count) / 1_000)
         }
         return "\(count)"
