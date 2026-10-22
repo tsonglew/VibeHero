@@ -18,6 +18,5 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build
       run: swift build -v
-    # No `swift test` yet: the package has no Tests target, and `swift test`
-    # fails hard ("no tests found") on that. Reinstate together with the
-    # localization key-coverage test planned in the README roadmap.
+    - name: Test
+      run: swift test
